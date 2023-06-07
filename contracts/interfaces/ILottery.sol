@@ -21,6 +21,9 @@ interface ILottery {
         address _user
     ) external;
 
+    /// @notice returns the current price of a ticket
+    function ticketPrice() external view returns (uint);
+
     /// @notice returns the amount of tickets needed for the next Level1 to be over;
     /// @return amount of tickets
     function ticketsToEndL1() external view returns (uint);
@@ -37,12 +40,5 @@ interface ILottery {
     /// @param _newAmount the amount of tickets that the minimum will be
     function setMinimumTicketBuy(uint _newAmount) external;
 
-    event LotteryStarted(uint timestamp);
-    event TicketsBought(
-        address indexed user,
-        uint _level1RoundId,
-        uint ticketAmount
-    );
-    event SetNewMinimumTicketBuy(uint prev, uint _new);
-    event AdvanceRound(uint level, uint newRoundId);
+    
 }

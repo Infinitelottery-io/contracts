@@ -64,6 +64,7 @@ describe("Lottery", function (){
     it("should set the appropriate tickets when going above max tickets for the round and overflowing", async () => {
       const { lottery, usdc, user1, user2 } = await loadFixture(lotteryStart);
       await usdc.connect(user1).approve(lottery.address, parseEther("10000"));
+      await usdc.connect(user2).approve(lottery.address, parseEther("10000"));
       await lottery.connect(user1).buyTickets(10000, zero);
       const participations = await lottery.allRoundsParticipatedIn(user1.address)
       expect(participations.length).to.equal(12)
@@ -71,8 +72,31 @@ describe("Lottery", function (){
         expect(await lottery.ticketsL1OnRoundId(i, user1.address)).to.equal(1000);
       }
       expect(await lottery.maxRoundIdPerLevel(1)).to.equal(13);
+      await lottery.connect(user2).buyTickets(1000, zero);
+      expect(await lottery.maxRoundIdPerLevel(1)).to.equal(14);
+      expect(await lottery.ticketsL1OnRoundId(13, user2.address)).to.equal(1000);
+      expect(await lottery.ticketsL1OnRoundId(14, user2.address)).to.equal(200);
     })
-    it("should set the current round to be able to request plays")
+    it("should set the current round to be able to request plays", async () => {
+      const { lottery, usdc, user1, user2 } = await loadFixture(lotteryStart);
+      await usdc.connect(user1).approve(lottery.address, parseEther("10000"));
+      await usdc.connect(user2).approve(lottery.address, parseEther("10000"));
+      await lottery.connect(user1).buyTickets(1000, zero);
+      await lottery.connect(user2).buyTickets(1000, zero);
+      expect(await lottery.maxRoundIdPerLevel(1)).to.equal(3);
+
+      // Check that tickets are assigned correctly on multiple buys of same round
+      expect(await lottery.ticketsL1OnRoundId(1, user1.address)).to.equal(1000);
+      expect(await lottery.ticketsL1OnRoundId(2, user1.address)).to.equal(200);
+      expect(await lottery.ticketsL1OnRoundId(2, user2.address)).to.equal(800);
+      expect(await lottery.ticketsL1OnRoundId(3, user2.address)).to.equal(200);
+      expect(await lottery.ticketsL1OnRoundId(4, user2.address)).to.equal(200);
+
+      expect(await lottery.totalRoundsToPlay()).to.equal(2);
+      expect(await lottery.roundsToPlay(0)).to.equal(1);
+      expect(await lottery.roundsToPlay(1)).to.equal(2);
+
+    })
     it("should allow a third party to buy tickets for another user")
   });
   
