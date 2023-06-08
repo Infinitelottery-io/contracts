@@ -3,33 +3,43 @@ pragma solidity 0.8.20;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@chainlink/contracts/src/v0.8/VRFConsumerBaseV2.sol";
 import "@chainlink/contracts/src/v0.8/interfaces/VRFCoordinatorV2Interface.sol";
 import "./interfaces/ILottery.sol";
+import "./interfaces/IWinnerHub.sol";
 // TODO REMOVE TEST LIBRARY
 import "hardhat/console.sol";
 
-error MinimumTicketsNotReached(uint minTickets);
-error HighValue(uint valueSent);
+error InfiniteLottery__NoRoundsToPlay();
+error InfiniteLottery__MinimumTicketsNotReached(uint minTickets);
+error InfiniteLottery__HighValue(uint valueSent);
+error InfiniteLottery__InvalidWinnerHub();
 
-contract InfiniteLottery is ILottery, VRFConsumerBaseV2, Ownable {
+contract InfiniteLottery is ILottery, VRFConsumerBaseV2, Ownable, ReentrancyGuard {
+    //-------------------------------------------------------------------------
+    //    Type Declarations
+    //-------------------------------------------------------------------------
     struct Level1Participants {
-        address[] users;
         uint[] ticketsPerUser;
         uint totalTickets;
         uint roiOverflow;
+        uint bulkId; // We'll only be using a single request ID for multiple levels, the winner will be using shifted values from the randomness
+        uint winnerIndex;
+        address[] users;
     }
     struct UpperLevels {
         uint minL1;
         uint maxL1;
-        bytes32 vrfRequestId;
         uint currentPot;
+        uint bulkId; // We'll only be using a single request ID for multiple levels, the winner will be using shifted values from the randomness
+        uint winnerIndex;
     }
     struct WinnerInfo {
-        uint[] levels;
-        uint[] ids;
-        uint[] winnerNumbers;
-        address[] winnerAddresses;
+        uint level;
+        uint id;
+        uint winnerNumber;
+        address winnerAddress;
     }
     struct UserParticipations {
         uint[] participationsL1;
@@ -40,14 +50,17 @@ contract InfiniteLottery is ILottery, VRFConsumerBaseV2, Ownable {
         uint index; // Index in the users array for Level1Participants
         bool set;
     }
-    mapping(uint _level => mapping(uint _id => UpperLevels))
-        private _higherLevels;
+    //-------------------------------------------------------------------------
+    //    State Variables
+    //-------------------------------------------------------------------------
+    mapping(uint _level => mapping(uint _id => UpperLevels)) private _higherLevels;
     mapping(uint _round => Level1Participants) private _level1;
     mapping(address _user => UserParticipations) public userParticipations;
-    mapping(address _user => mapping(uint _level1Id => UserRoundInfo))
-        public userTickets;
+    mapping(address _user => mapping(uint _level1Id => UserRoundInfo)) public userTickets;
     //TODO Make sure we have the winner info visible on request
-    mapping(bytes32 randomRequest => WinnerInfo) private winnerInfo;
+    mapping(uint bulkId => uint vrfRequestID) private bulkIdToVrfRequestID;
+    mapping(uint vrfRequestId => uint bulkId) private vrfRequestToBulkId;
+    mapping(uint bulkId => WinnerInfo[]) private winnerInfo;
     mapping(uint _level => uint maxId) public maxRoundIdPerLevel;
 
     uint[] public roundsToPlay; // Only level_1 IDs here.
@@ -55,11 +68,13 @@ contract InfiniteLottery is ILottery, VRFConsumerBaseV2, Ownable {
     IERC20 public USDC; // The only Token used here
     // BSC USDC address = 0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d
     VRFCoordinatorV2Interface private immutable vrf;
+    IWinnerHub public winnerHub;
     address public dividendNFT;
     address public discountLocker;
     address public winnerDistribution;
     address public teamWallet;
 
+    uint private bulkId = 0; // current id of the bulk of winner info to get
     uint public currentHighest; // Current highest with prize pot associated with it.
     uint public currentWeeklyRound;
     uint public constant ticketsPerL1 = 1000;
@@ -73,6 +88,7 @@ contract InfiniteLottery is ILottery, VRFConsumerBaseV2, Ownable {
     uint public referralPot = 6;
     uint public teamPot = 2;
     uint public weeklyPot = 2;
+    uint public constant BASE_DISTRIBUTION = 100;
     uint public MINIMUM_TICKETS_PER_BUY = 10;
 
     // VRF Stuff
@@ -80,6 +96,18 @@ contract InfiniteLottery is ILottery, VRFConsumerBaseV2, Ownable {
     uint64 private subid;
     uint16 private minConfirmations = 3; // default
     uint32 private callbackGasLimit = 100000; // initial value allegedly it costs
+
+    //-------------------------------------------------------------------------
+    //    EVENTS
+    //-------------------------------------------------------------------------
+    event LotteryStarted(uint timestamp);
+    event TicketsBought(
+        address indexed user,
+        uint _level1RoundId,
+        uint ticketAmount
+    );
+    event SetNewMinimumTicketBuy(uint prev, uint _new);
+    event AdvanceRound(uint level, uint newRoundId);
 
     // numwords to request has a max of 500.
 
@@ -91,6 +119,9 @@ contract InfiniteLottery is ILottery, VRFConsumerBaseV2, Ownable {
     // 0x6A2AAd07396B36Fe02a22b33cf443582f682c82f
     // VRF 50gwei key hash
     // 0xd4bb89654db74673a187bd804519e65e3f71a52bc55f11da7601a13dcf505314
+    //-------------------------------------------------------------------------
+    //    Constructor
+    //-------------------------------------------------------------------------
     constructor(
         address _vrfCoordinator,
         address _usdc,
@@ -100,11 +131,13 @@ contract InfiniteLottery is ILottery, VRFConsumerBaseV2, Ownable {
         USDC = IERC20(_usdc);
         ticketPrice = _ticketPrice;
     }
-
+    //-------------------------------------------------------------------------
+    //    External Functions
+    //-------------------------------------------------------------------------
     function startLottery() external onlyOwner {
         require(maxRoundIdPerLevel[1] == 0, "Already started");
         maxRoundIdPerLevel[1] = 1;
-        _higherLevels[2][1] = UpperLevels(1, 0, bytes32(0), 0);
+        _higherLevels[2][1] = UpperLevels(1, 0, 0, 0, 0);
         emit LotteryStarted(block.timestamp);
     }
 
@@ -120,13 +153,92 @@ contract InfiniteLottery is ILottery, VRFConsumerBaseV2, Ownable {
         _buyTickets(_ticketAmount, _referral, _user);
     }
 
+    // This will be called by the contract itself to advance rounds internally
+    // honestly this is mainly for testing purposes. But it's a good way to do it in case someone decides to
+    // buy a lot of tickets from the get go.
+    function playRounds() public nonReentrant{
+        // make sure that there are rounds to play
+        if(roundsToPlay.length == 0) 
+            revert InfiniteLottery__NoRoundsToPlay();
+
+        
+        uint requestNumbers;
+        uint round1Pot = ticketsPerL1 * ticketPrice;
+
+        WinnerInfo[] storage winnerChoose = winnerInfo[bulkId];
+        // Start to loop through available rounds to play
+        for( uint i = 0; i < roundsToPlay.length; i++){
+            // We need to transfer out the roiOverflow
+            // Distribute POT to next round and other users (?) OR do we do this after we have the winner tickets picked?
+            Level1Participants storage level1 = _level1[roundsToPlay[i]];
+            WinnerInfo memory winnerLog = WinnerInfo({
+                level: 1,
+                id: roundsToPlay[i],
+                winnerAddress: address(0),
+                winnerNumber: 0
+            });
+            // Record where the info for the winner is stored
+            level1.bulkId = bulkId;
+            level1.winnerIndex = winnerChoose.length;
+            if(level1.users.length == 1){
+                winnerLog.winnerAddress = level1.users[0];
+                distributeWins(winnerLog.winnerAddress, 1);
+            }
+            else
+                requestNumbers ++;
+            winnerChoose.push(winnerLog);
+
+            // set POT info on higherlevel
+            _higherLevels[2][maxRoundIdPerLevel[2]].currentPot += rollupPot * round1Pot / BASE_DISTRIBUTION;
+            
+        }
+        // split rounds to play in fragments of 5 rounds (?), we should definitely have this shit tested.
+        // after this is called, then we can safely reset the array of rounds to play.
+
+        // Increase BulkId count
+        bulkId ++;
+        // reset the results array;
+        roundsToPlay = new uint[](0);
+    }
+
+    function setMinimumTicketBuy(uint _newAmount) external onlyOwner {
+        if (_newAmount > 100) revert InfiniteLottery__HighValue(_newAmount);
+        emit SetNewMinimumTicketBuy(MINIMUM_TICKETS_PER_BUY, _newAmount);
+        MINIMUM_TICKETS_PER_BUY = _newAmount;
+    }
+
+    function setWinnerHub(address _hub) external onlyOwner {
+        if(_hub == address(0))
+            revert InfiniteLottery__InvalidWinnerHub();
+        winnerHub = IWinnerHub(_hub);
+        USDC.approve(_hub, type(uint).max); // max approval
+    }
+
+    function increaseHubApproval()external {
+        USDC.approve(address(winnerHub), type(uint).max); // max approval
+    }
+
+    //-------------------------------------------------------------------------
+    //    Internal Functions
+    //-------------------------------------------------------------------------
+
+    function fulfillRandomWords(
+        uint requestId,
+        uint256[] memory randomWords
+    ) internal override {
+        console.log("Fulfill request", requestId, randomWords.length);
+    }
+    //-------------------------------------------------------------------------
+    //    Private Functions
+    //-------------------------------------------------------------------------
+
     function _buyTickets(
         uint _ticketAmount,
         address _referral,
         address _user
-    ) private {
+    ) private nonReentrant{
         require(maxRoundIdPerLevel[1] > 0, "Not started");
-        if (_ticketAmount < 10) revert MinimumTicketsNotReached(10);
+        if (_ticketAmount < 10) revert InfiniteLottery__MinimumTicketsNotReached(10);
         UserParticipations storage userPlays = userParticipations[_user];
         uint leftovers;
         uint roiTickets;
@@ -186,24 +298,20 @@ contract InfiniteLottery is ILottery, VRFConsumerBaseV2, Ownable {
 
         // Transfer money in
         uint potAddition = _ticketAmount * ticketPrice;
-        console.log(
-            "request payment",
-            potAddition,
-            USDC.allowance(msg.sender, address(this))
-        );
         USDC.transferFrom(msg.sender, address(this), potAddition);
         // check roiPot amount, if it's not a multiple of 1 ether
         // the remainder needs to be sent to  team wallet.
     }
 
-    /// @notice Creates in a level for the user
-    /// @param amount ticket amount to create, can go above max l1 tickets
-    /// @param levelId the l1 id where tickets are added
-    /// @param generatesROI this should only be true once on buys, rest of time should be false
-    /// @return leftoverTickets the amount of tickets that overflow current round
-    /// @return nextId the next level 1 round
-    /// @return roiTickets the amount of tickets to claim for the next round
-    /// @dev roiLeftOver  the amount (in cents) of what should go to the discount pool
+    /** @notice Creates in a level for the user
+    *   @param amount ticket amount to create, can go above max l1 tickets
+    *   @param levelId the l1 id where tickets are added
+    *   @param generatesROI this should only be true once on buys, rest of time should be false
+    *   @return leftoverTickets the amount of tickets that overflow current round
+    *   @return nextId the next level 1 round
+    *   @return roiTickets the amount of tickets to claim for the next round
+    *   @dev roiLeftOver  the amount (in cents) of what should go to the discount pool
+    **/ 
     function _createTickets(
         uint amount,
         uint levelId,
@@ -246,6 +354,21 @@ contract InfiniteLottery is ILottery, VRFConsumerBaseV2, Ownable {
         emit TicketsBought(_user, levelId, amount);
     }
 
+    function distributeWins(address _winner, uint level) private {
+        address ref = userParticipations[_winner].referral;
+        uint amount = ticketsPerL1 * ticketPrice;
+        uint refAmount = 0;
+        if(level == 2)
+            amount *= 20;
+        if(level > 2)
+            amount *= 10 ** (level - 2);
+        if (ref != address(0)) {
+            refAmount = amount * referralPot / BASE_DISTRIBUTION;
+        }
+        amount = amount * winnerPot / BASE_DISTRIBUTION;
+        winnerHub.distributeWinnings(_winner, ref, amount, refAmount);
+    }
+
     // lets set this data when requesting random round info
     // function queueHigherLevelToPlay(uint currentLevel, uint currentId) private {
     //     bool advances;
@@ -274,6 +397,10 @@ contract InfiniteLottery is ILottery, VRFConsumerBaseV2, Ownable {
     //     }
     // }
 
+    //-------------------------------------------------------------------------
+    //    External & Public VIEW functions
+    //-------------------------------------------------------------------------
+
     /// @notice Give back the current amount pending
     function ticketsToEndL1() public view returns (uint) {
         uint currentL1Id = maxRoundIdPerLevel[1];
@@ -299,19 +426,6 @@ contract InfiniteLottery is ILottery, VRFConsumerBaseV2, Ownable {
         return currentMaxRound - currentL1inPlay;
     }
 
-    function setMinimumTicketBuy(uint _newAmount) external onlyOwner {
-        if (_newAmount > 100) revert HighValue(_newAmount);
-        emit SetNewMinimumTicketBuy(MINIMUM_TICKETS_PER_BUY, _newAmount);
-        MINIMUM_TICKETS_PER_BUY = _newAmount;
-    }
-
-    function fulfillRandomWords(
-        uint requestId,
-        uint256[] memory randomWords
-    ) internal override {
-        console.log("Fulfill request", requestId, randomWords.length);
-    }
-
     function allRoundsParticipatedIn(
         address _user
     ) external view returns (uint[] memory roundsPlayed) {
@@ -323,5 +437,20 @@ contract InfiniteLottery is ILottery, VRFConsumerBaseV2, Ownable {
         address _user
     ) external view returns (uint) {
         return userTickets[_user][_roundId].tickets;
+    }
+
+    function totalRoundsToPlay() external view returns (uint) {
+        return roundsToPlay.length;
+    }
+
+    function getAllL1Participants(uint level1Id) external view returns( address[] memory users, uint[] memory tickets){
+        users = _level1[level1Id].users;
+        tickets = _level1[level1Id].ticketsPerUser;
+    }
+
+    function getLevelRoundWinner(uint level, uint roundId) external view returns(address){
+
+        // todo!!!!!
+        return address(0);
     }
 }
