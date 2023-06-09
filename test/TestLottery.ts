@@ -99,5 +99,14 @@ describe("Lottery", function (){
     })
     it("should allow a third party to buy tickets for another user")
   });
+
+  describe("Play Rounds", () => {
+    // First round play
+    it("Should not allow to play rounds if non are completed")
+    // test with 1 round
+    it("Should make the appropriate amount of requests")
+    // test with 1 round complete and try to play again
+    it("Should not allow to play duplicate rounds")
+  })
   
 })
