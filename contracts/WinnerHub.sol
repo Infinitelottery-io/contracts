@@ -7,6 +7,7 @@ import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "./interfaces/ILottery.sol";
 import "./interfaces/IWinnerHub.sol";
+import { IUniswapV2Router02 } from './interfaces/IUniswap.sol';
 
 //-------------------------------------------------------------------------
 //    Errors
@@ -37,6 +38,7 @@ contract WinnerHub is ReentrancyGuard, Ownable, IWinnerHub{
   // @audit-issue Check if 1 or multiple contracts will be used
   IERC721 public DividendNFT;
   ILottery public Lottery;
+  IUniswapV2Router02 public router;
   //-------------------------------------------------------------------------
   //    Events
   //-------------------------------------------------------------------------
@@ -46,11 +48,12 @@ contract WinnerHub is ReentrancyGuard, Ownable, IWinnerHub{
   //-------------------------------------------------------------------------
   //    Constructor
   //-------------------------------------------------------------------------
-  constructor(address _usdc, address _ifl, address _dividendNFT, address _lottery) {
+  constructor(address _usdc, address _ifl, address _dividendNFT, address _lottery, address _router) {
     USDC = IERC20(_usdc);
     IFL = Iifl(_ifl);
     DividendNFT = IERC721(_dividendNFT);
     Lottery = ILottery(_lottery);
+    router = IUniswapV2Router02(_router);
   }
 
   //-------------------------------------------------------------------------
@@ -61,7 +64,7 @@ contract WinnerHub is ReentrancyGuard, Ownable, IWinnerHub{
       revert WinnerHub__NoWinnings();
 
     winnings[_winner] += _winAmount;
-    // @audit definitely need to check this so that multiple levels are correctly saved.
+    // Since the condition to claim is to BURN 10% in IFL it doesn't matter the level to claim
     if(_referral != address(0) && _refAmount > 0){
       referrals[_referral] += _refAmount;
     }
@@ -91,14 +94,18 @@ contract WinnerHub is ReentrancyGuard, Ownable, IWinnerHub{
     bool succ;
     
     if(DividendNFT.balanceOf(msg.sender) == 0){
-        /// GET current price of IFL
+        /// Amount in USDC
         uint amountToBurn = amountToClaim / 10; // 10% of amountToClaim
-        /// TODO get the IFL amount of amountToBurn
-        /// AmountToBurn = amountToBurn * IFLPrice / Adjustment for Decimals;
-        succ = IFL.transferFrom(msg.sender, address(this), amountToBurn);
-        if(!succ){
-          revert WinnerHub__IFLTransferError();
-        }
+
+        /// Approve USDC for swapping
+        USDC.approve(address(router), amountToBurn);
+        /// SWAP USDC for IFL
+        address[] memory path = new address[](2);
+        path[0] = address(USDC);
+        path[1] = address(IFL);
+        router.swapExactTokensForTokens(amountToBurn, 0, path, address(this), block.timestamp);
+        /// WHATEVER IFL is left in the contract, burn it
+        amountToBurn = IFL.balanceOf(address(this));
         IFL.burn(amountToBurn);
     }
 
