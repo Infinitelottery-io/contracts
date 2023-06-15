@@ -10,6 +10,7 @@ error DiscountBooth__InvalidLotteryAddress();
 error DiscountBooth__InvalidDiscountAmount();
 error DiscountBooth__InvalidUSDCAddress();
 error DiscountBooth__InsufficientUSDCBalance();
+error DiscountBooth__InvalidDiscount();
 
 contract DiscountBooth is Ownable, ReentrancyGuard {
     //-------------------------------------------------------------------------
@@ -25,37 +26,49 @@ contract DiscountBooth is Ownable, ReentrancyGuard {
     //-------------------------------------------------------------------------
     //    Events
     //-------------------------------------------------------------------------
-    event DiscountApplied(address indexed buyer, uint ticketsBought, uint indexed usdcAmountUsed);
-    event UpdatedLottery(address indexed prevLottery, address indexed newLottery);
-    event UpdatedDiscountAmount(uint indexed prevDiscound, uint indexed newDiscountAmount);
+    event DiscountApplied(
+        address indexed buyer,
+        uint ticketsBought,
+        uint indexed usdcAmountUsed
+    );
+    event UpdatedLottery(
+        address indexed prevLottery,
+        address indexed newLottery
+    );
+    event UpdatedDiscountAmount(
+        uint indexed prevDiscound,
+        uint indexed newDiscountAmount
+    );
     //-------------------------------------------------------------------------
     //    Modifiers
     //-------------------------------------------------------------------------
     modifier isValidLottery(address _lottery) {
-      if(_lottery == address(0))
-        revert DiscountBooth__InvalidLotteryAddress();
-      try ILottery(_lottery).ticketPrice() returns(uint _price) {
-        if(_price < 0.5 ether)
-          revert DiscountBooth__InvalidLotteryAddress();
-        _;
-      }
-      catch{
-        revert DiscountBooth__InvalidLotteryAddress();
-      }
+        if (_lottery == address(0))
+            revert DiscountBooth__InvalidLotteryAddress();
+        try ILottery(_lottery).ticketPrice() returns (uint _price) {
+            if (_price < 0.5 ether)
+                revert DiscountBooth__InvalidLotteryAddress();
+            _;
+        } catch {
+            revert DiscountBooth__InvalidLotteryAddress();
+        }
     }
 
-    modifier isValidDiscountAmount(uint _amount, bool _constructor){
-      if(_amount > DISCOUNT_BASE || (_amount < 100 && _constructor))
-          revert DiscountBooth__InvalidDiscountAmount();
-      _;
+    modifier isValidDiscountAmount(uint _amount, bool _constructor) {
+        if (_amount > DISCOUNT_BASE || (_amount < 100 && _constructor))
+            revert DiscountBooth__InvalidDiscountAmount();
+        _;
     }
+
     //-------------------------------------------------------------------------
     //    CONSTRUCTOR
     //-------------------------------------------------------------------------
-    constructor(address _lottery, address _usdc, uint _discount) isValidLottery(_lottery) isValidDiscountAmount(_discount, true){
-        
-        if(_usdc == address(0))
-          revert DiscountBooth__InvalidUSDCAddress();
+    constructor(
+        address _lottery,
+        address _usdc,
+        uint _discount
+    ) isValidLottery(_lottery) isValidDiscountAmount(_discount, true) {
+        if (_usdc == address(0)) revert DiscountBooth__InvalidUSDCAddress();
 
         lottery = ILottery(_lottery);
         USDC = IERC20(_usdc);
@@ -63,22 +76,24 @@ contract DiscountBooth is Ownable, ReentrancyGuard {
         discountAmount = _discount;
     }
 
-
     //-------------------------------------------------------------------------
     //    External Functions
     //-------------------------------------------------------------------------
 
-    function buyTicketsAtDiscount(uint ticketsToBuy, address _referral) external nonReentrant{
+    function buyTicketsAtDiscount(
+        uint ticketsToBuy,
+        address _referral
+    ) external nonReentrant {
         uint ticketPrice = lottery.ticketPrice();
         uint totalCost = ticketPrice * ticketsToBuy;
-        uint discount = totalCost * discountAmount / DISCOUNT_BASE;
+        uint discount = (totalCost * discountAmount) / DISCOUNT_BASE;
         // Make sure we have enough funds to cover the discount;
-        if(USDC.balanceOf(address(this)) < discount)
-          revert DiscountBooth__InsufficientUSDCBalance();
+        if (USDC.balanceOf(address(this)) < discount)
+            revert DiscountBooth__InsufficientUSDCBalance();
         // Update Global vars
         totalTicketsBought += ticketsToBuy;
         totalDiscountsGiven += discount;
-        
+
         uint costWithDiscount = totalCost - discount;
         USDC.transferFrom(msg.sender, address(this), costWithDiscount);
         emit DiscountApplied(msg.sender, ticketsToBuy, costWithDiscount);
@@ -87,7 +102,9 @@ contract DiscountBooth is Ownable, ReentrancyGuard {
 
     /// @notice Update the Lottery address in case of a redeploy
     /// @param _lottery The address of the new lottery
-    function updateLottery(address _lottery) external onlyOwner isValidLottery(_lottery){
+    function updateLottery(
+        address _lottery
+    ) external onlyOwner isValidLottery(_lottery) {
         // remove USDc approval from old lottery
         USDC.approve(address(lottery), 0);
         emit UpdatedLottery(address(lottery), _lottery);
@@ -103,8 +120,19 @@ contract DiscountBooth is Ownable, ReentrancyGuard {
      *      The discount amount is represented in basis points (10000 = 100.00%)
      *      The discount amount can't be greater than 100% (10000)
      */
-    function updateDiscountAmount(uint _newDiscount) external onlyOwner isValidDiscountAmount(_newDiscount, false){
-      emit UpdatedDiscountAmount(discountAmount, _newDiscount);
-      discountAmount = _newDiscount;
+    function updateDiscountAmount(
+        uint _newDiscount
+    ) external onlyOwner isValidDiscountAmount(_newDiscount, false) {
+        if (_newDiscount > DISCOUNT_BASE)
+            revert DiscountBooth__InvalidDiscount();
+        emit UpdatedDiscountAmount(discountAmount, _newDiscount);
+        discountAmount = _newDiscount;
+    }
+
+    /**
+     * @notice Increases the approval of the lottery to spend USDC
+     */
+    function increaseLotteryApproval() external {
+        USDC.approve(address(lottery), type(uint).max);
     }
 }
