@@ -16,7 +16,12 @@ error InfiniteLottery__MinimumTicketsNotReached(uint minTickets);
 error InfiniteLottery__HighValue(uint valueSent);
 error InfiniteLottery__InvalidWinnerHub();
 
-contract InfiniteLottery is ILottery, VRFConsumerBaseV2, Ownable, ReentrancyGuard {
+contract InfiniteLottery is
+    ILottery,
+    VRFConsumerBaseV2,
+    Ownable,
+    ReentrancyGuard
+{
     //-------------------------------------------------------------------------
     //    Type Declarations
     //-------------------------------------------------------------------------
@@ -53,10 +58,12 @@ contract InfiniteLottery is ILottery, VRFConsumerBaseV2, Ownable, ReentrancyGuar
     //-------------------------------------------------------------------------
     //    State Variables
     //-------------------------------------------------------------------------
-    mapping(uint _level => mapping(uint _id => UpperLevels)) private _higherLevels;
+    mapping(uint _level => mapping(uint _id => UpperLevels))
+        private _higherLevels;
     mapping(uint _round => Level1Participants) private _level1;
     mapping(address _user => UserParticipations) public userParticipations;
-    mapping(address _user => mapping(uint _level1Id => UserRoundInfo)) public userTickets;
+    mapping(address _user => mapping(uint _level1Id => UserRoundInfo))
+        public userTickets;
     //TODO Make sure we have the winner info visible on request
     mapping(uint bulkId => uint vrfRequestID) private bulkIdToVrfRequestID;
     mapping(uint vrfRequestId => uint bulkId) private vrfRequestToBulkId;
@@ -131,6 +138,7 @@ contract InfiniteLottery is ILottery, VRFConsumerBaseV2, Ownable, ReentrancyGuar
         USDC = IERC20(_usdc);
         ticketPrice = _ticketPrice;
     }
+
     //-------------------------------------------------------------------------
     //    External Functions
     //-------------------------------------------------------------------------
@@ -156,18 +164,16 @@ contract InfiniteLottery is ILottery, VRFConsumerBaseV2, Ownable, ReentrancyGuar
     // This will be called by the contract itself to advance rounds internally
     // honestly this is mainly for testing purposes. But it's a good way to do it in case someone decides to
     // buy a lot of tickets from the get go.
-    function playRounds() public nonReentrant{
+    function playRounds() public nonReentrant {
         // make sure that there are rounds to play
-        if(roundsToPlay.length == 0) 
-            revert InfiniteLottery__NoRoundsToPlay();
+        if (roundsToPlay.length == 0) revert InfiniteLottery__NoRoundsToPlay();
 
-        
         uint requestNumbers;
         uint round1Pot = ticketsPerL1 * ticketPrice;
 
         WinnerInfo[] storage winnerChoose = winnerInfo[bulkId];
         // Start to loop through available rounds to play
-        for( uint i = 0; i < roundsToPlay.length; i++){
+        for (uint i = 0; i < roundsToPlay.length; i++) {
             // We need to transfer out the roiOverflow
             // Distribute POT to next round and other users (?) OR do we do this after we have the winner tickets picked?
             Level1Participants storage level1 = _level1[roundsToPlay[i]];
@@ -180,23 +186,22 @@ contract InfiniteLottery is ILottery, VRFConsumerBaseV2, Ownable, ReentrancyGuar
             // Record where the info for the winner is stored
             level1.bulkId = bulkId;
             level1.winnerIndex = winnerChoose.length;
-            if(level1.users.length == 1){
+            if (level1.users.length == 1) {
                 winnerLog.winnerAddress = level1.users[0];
                 distributeWins(winnerLog.winnerAddress, 1);
-            }
-            else
-                requestNumbers ++;
+            } else requestNumbers++;
             winnerChoose.push(winnerLog);
 
             // set POT info on higherlevel
-            _higherLevels[2][maxRoundIdPerLevel[2]].currentPot += rollupPot * round1Pot / BASE_DISTRIBUTION;
-            
+            _higherLevels[2][maxRoundIdPerLevel[2]].currentPot +=
+                (rollupPot * round1Pot) /
+                BASE_DISTRIBUTION;
         }
         // split rounds to play in fragments of 5 rounds (?), we should definitely have this shit tested.
         // after this is called, then we can safely reset the array of rounds to play.
 
         // Increase BulkId count
-        bulkId ++;
+        bulkId++;
         // reset the results array;
         roundsToPlay = new uint[](0);
     }
@@ -208,15 +213,16 @@ contract InfiniteLottery is ILottery, VRFConsumerBaseV2, Ownable, ReentrancyGuar
     }
 
     function setWinnerHub(address _hub) external onlyOwner {
-        if(_hub == address(0))
-            revert InfiniteLottery__InvalidWinnerHub();
+        if (_hub == address(0)) revert InfiniteLottery__InvalidWinnerHub();
         winnerHub = IWinnerHub(_hub);
         USDC.approve(_hub, type(uint).max); // max approval
     }
 
-    function increaseHubApproval()external {
+    function increaseHubApproval() external {
         USDC.approve(address(winnerHub), type(uint).max); // max approval
     }
+
+    function setReferral(address _newReferral) external {}
 
     //-------------------------------------------------------------------------
     //    Internal Functions
@@ -227,7 +233,9 @@ contract InfiniteLottery is ILottery, VRFConsumerBaseV2, Ownable, ReentrancyGuar
         uint256[] memory randomWords
     ) internal override {
         console.log("Fulfill request", requestId, randomWords.length);
+        //TODO Still pending implementation
     }
+
     //-------------------------------------------------------------------------
     //    Private Functions
     //-------------------------------------------------------------------------
@@ -236,9 +244,10 @@ contract InfiniteLottery is ILottery, VRFConsumerBaseV2, Ownable, ReentrancyGuar
         uint _ticketAmount,
         address _referral,
         address _user
-    ) private nonReentrant{
+    ) private nonReentrant {
         require(maxRoundIdPerLevel[1] > 0, "Not started");
-        if (_ticketAmount < 10) revert InfiniteLottery__MinimumTicketsNotReached(10);
+        if (_ticketAmount < 10)
+            revert InfiniteLottery__MinimumTicketsNotReached(10);
         UserParticipations storage userPlays = userParticipations[_user];
         uint leftovers;
         uint roiTickets;
@@ -272,6 +281,8 @@ contract InfiniteLottery is ILottery, VRFConsumerBaseV2, Ownable, ReentrancyGuar
                 );
             } while (leftovers > 0);
         }
+        //TODO ROI TICKETS ALSO DO ROI ... FUUUUUUK
+
         // NOW SET THE ROI TICKETS FOR THE NEXT ROUND
         userPlaying = userTickets[_user][level1Played];
         (leftovers, level1Played, ) = _createTickets(
@@ -304,14 +315,14 @@ contract InfiniteLottery is ILottery, VRFConsumerBaseV2, Ownable, ReentrancyGuar
     }
 
     /** @notice Creates in a level for the user
-    *   @param amount ticket amount to create, can go above max l1 tickets
-    *   @param levelId the l1 id where tickets are added
-    *   @param generatesROI this should only be true once on buys, rest of time should be false
-    *   @return leftoverTickets the amount of tickets that overflow current round
-    *   @return nextId the next level 1 round
-    *   @return roiTickets the amount of tickets to claim for the next round
-    *   @dev roiLeftOver  the amount (in cents) of what should go to the discount pool
-    **/ 
+     *   @param amount ticket amount to create, can go above max l1 tickets
+     *   @param levelId the l1 id where tickets are added
+     *   @param generatesROI this should only be true once on buys, rest of time should be false
+     *   @return leftoverTickets the amount of tickets that overflow current round
+     *   @return nextId the next level 1 round
+     *   @return roiTickets the amount of tickets to claim for the next round
+     *   @dev roiLeftOver  the amount (in cents) of what should go to the discount pool
+     **/
     function _createTickets(
         uint amount,
         uint levelId,
@@ -358,14 +369,12 @@ contract InfiniteLottery is ILottery, VRFConsumerBaseV2, Ownable, ReentrancyGuar
         address ref = userParticipations[_winner].referral;
         uint amount = ticketsPerL1 * ticketPrice;
         uint refAmount = 0;
-        if(level == 2)
-            amount *= 20;
-        if(level > 2)
-            amount *= 10 ** (level - 2);
+        if (level == 2) amount *= 20;
+        if (level > 2) amount *= 10 ** (level - 2);
         if (ref != address(0)) {
-            refAmount = amount * referralPot / BASE_DISTRIBUTION;
+            refAmount = (amount * referralPot) / BASE_DISTRIBUTION;
         }
-        amount = amount * winnerPot / BASE_DISTRIBUTION;
+        amount = (amount * winnerPot) / BASE_DISTRIBUTION;
         winnerHub.distributeWinnings(_winner, ref, amount, refAmount);
     }
 
@@ -443,13 +452,17 @@ contract InfiniteLottery is ILottery, VRFConsumerBaseV2, Ownable, ReentrancyGuar
         return roundsToPlay.length;
     }
 
-    function getAllL1Participants(uint level1Id) external view returns( address[] memory users, uint[] memory tickets){
+    function getAllL1Participants(
+        uint level1Id
+    ) external view returns (address[] memory users, uint[] memory tickets) {
         users = _level1[level1Id].users;
         tickets = _level1[level1Id].ticketsPerUser;
     }
 
-    function getLevelRoundWinner(uint level, uint roundId) external view returns(address){
-
+    function getLevelRoundWinner(
+        uint level,
+        uint roundId
+    ) external view returns (address) {
         // todo!!!!!
         return address(0);
     }
