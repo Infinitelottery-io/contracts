@@ -11,7 +11,7 @@ import "./interfaces/IWinnerHub.sol";
 import "./interfaces/IDividendNFT.sol";
 import "./interfaces/IWeeklyLottery.sol";
 // TODO REMOVE TEST LIBRARY
-import "hardhat/console.sol";
+import "forge-std/console.sol";
 
 error InfiniteLottery__NoRoundsToPlay();
 error InfiniteLottery__MinimumTicketsNotReached(uint minTickets);
@@ -20,6 +20,14 @@ error InfiniteLottery__InvalidWinnerHub();
 error InfiniteLottery__InvalidDiscountLocker();
 error InfiniteLottery__InvalidDividendNFT();
 error InfiniteLottery__InvalidWeeklyLottery();
+error InfiniteLottery__InvalidTeamWallet();
+error InfiniteLottery__IncompleteSetup(
+    address,
+    address,
+    address,
+    address,
+    address
+);
 
 contract InfiniteLottery is
     ILottery,
@@ -139,17 +147,39 @@ contract InfiniteLottery is
     constructor(
         address _vrfCoordinator,
         address _usdc,
-        uint _ticketPrice
+        uint _ticketPrice,
+        uint64 _vrfSubId
     ) VRFConsumerBaseV2(_vrfCoordinator) {
         vrf = VRFCoordinatorV2Interface(_vrfCoordinator);
+        // These only operate in BSC Mainnet and Testnet
+        if (block.chainid == 56)
+            vrfHash = 0x114f3da0a805b6a67d6e9cd2ec746f7028f1b7376365af575cfea3550dd1aa04;
+        else if (block.chainid == 97)
+            vrfHash = 0xd4bb89654db74673a187bd804519e65e3f71a52bc55f11da7601a13dcf505314;
+
         USDC = IERC20(_usdc);
         ticketPrice = _ticketPrice;
+        subid = _vrfSubId;
     }
 
     //-------------------------------------------------------------------------
     //    External Functions
     //-------------------------------------------------------------------------
     function startLottery() external onlyOwner {
+        if (
+            teamWallet == address(0) ||
+            discountLocker == address(0) ||
+            address(dividendNFT) == address(0) ||
+            address(winnerHub) == address(0) ||
+            address(weeklyDrawLottery) == address(0)
+        )
+            revert InfiniteLottery__IncompleteSetup(
+                teamWallet,
+                discountLocker,
+                address(dividendNFT),
+                address(winnerHub),
+                address(weeklyDrawLottery)
+            );
         require(maxRoundIdPerLevel[1] == 0, "Already started");
         maxRoundIdPerLevel[1] = 1;
         _higherLevels[2][1] = UpperLevels(1, 0, 0, 0, 0);
@@ -174,7 +204,7 @@ contract InfiniteLottery is
     function playRounds() public nonReentrant {
         // make sure that there are rounds to play
         if (roundsToPlay.length == 0) revert InfiniteLottery__NoRoundsToPlay();
-
+        console.log("Here");
         uint requestNumbers;
         uint round1Pot = ticketsPerL1 * ticketPrice;
 
@@ -182,6 +212,7 @@ contract InfiniteLottery is
         // Start to loop through available rounds to play
         for (uint i = 0; i < roundsToPlay.length; i++) {
             uint currentL1Round = roundsToPlay[i];
+            console.log("Current L1 %s", currentL1Round);
             // We need to transfer out the roiOverflow
             // Distribute POT to next round and other users (?) OR do we do this after we have the winner tickets picked?
             Level1Participants storage level1 = _level1[currentL1Round];
@@ -202,7 +233,7 @@ contract InfiniteLottery is
                 currentL1Round,
                 bulkId
             );
-
+            console.log("Request Numbers %s", requestNumbers);
             if (level1.users.length == 1) {
                 winnerLog.winnerAddress = level1.users[0];
                 distributeWins(winnerLog.winnerAddress, round1Pot);
@@ -281,6 +312,12 @@ contract InfiniteLottery is
         ) revert InfiniteLottery__InvalidWeeklyLottery();
         weeklyDrawLottery = IWeeklyLottery(_newWeeklyDraw);
         USDC.approve(_newWeeklyDraw, type(uint).max); // max approval
+    }
+
+    function setTeamWalletAddress(address _newTeamWallet) external onlyOwner {
+        if (_newTeamWallet == address(0) || teamWallet == _newTeamWallet)
+            revert InfiniteLottery__InvalidTeamWallet();
+        teamWallet = _newTeamWallet;
     }
 
     //-------------------------------------------------------------------------
@@ -456,6 +493,7 @@ contract InfiniteLottery is
     ) private returns (uint additionalRequests) {
         // DISTRIBUTE ROI
         uint potToDistribute = (pot * roiPot) / BASE_DISTRIBUTION;
+        console.log("potToDistribute", potToDistribute);
         // If current Level is 1, roi distribution already happened in the form of tickets
         if (currentLevel > 1) USDC.transfer(discountLocker, potToDistribute);
         // DISTRIBUTE DIVIDENDS
