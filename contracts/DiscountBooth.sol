@@ -1,5 +1,5 @@
 //SPDX-License-Identifier: MIT
-pragma solidity 0.8.20;
+pragma solidity 0.8.19;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -134,5 +134,15 @@ contract DiscountBooth is Ownable, ReentrancyGuard {
      */
     function increaseLotteryApproval() external {
         USDC.approve(address(lottery), type(uint).max);
+    }
+
+    function availableTicketsAtDiscount() external view returns (uint) {
+        uint currentBalance = USDC.balanceOf(address(this));
+
+        return
+            (currentBalance * DISCOUNT_BASE) /
+            // We use 1 ether because it's the base decimals for USDC on BNB
+            // ticket Price is 1 ether so we can discard it from the equation since it would only be extra calculations
+            (discountAmount * 1 ether);
     }
 }
