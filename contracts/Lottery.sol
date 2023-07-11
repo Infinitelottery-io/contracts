@@ -121,6 +121,7 @@ contract InfiniteLottery is
     );
     event SetNewMinimumTicketBuy(uint prev, uint _new);
     event AdvanceRound(uint level, uint newRoundId);
+    event NonWinsDistributed(uint indexed level, uint indexed roundId);
 
     // numwords to request has a max of 500.
 
@@ -193,6 +194,15 @@ contract InfiniteLottery is
             // Record where the info for the winner is stored
             level1.bulkId = bulkId;
             level1.winnerIndex = winnerChoose.length;
+            // Distribute the pot of complete round and any superior completed rounds
+            // Increase the amount of numbers to request in a single call to vrf.
+            requestNumbers += distributeNonWinPot(
+                round1Pot,
+                1,
+                currentL1Round,
+                bulkId
+            );
+
             if (level1.users.length == 1) {
                 winnerLog.winnerAddress = level1.users[0];
                 distributeWins(winnerLog.winnerAddress, round1Pot);
@@ -200,9 +210,16 @@ contract InfiniteLottery is
 
             winnerChoose.push(winnerLog);
         }
-        // split rounds to play in fragments of 5 rounds (?), we should definitely have this shit tested.
+        // Request the random numbers from the VRF and stores request ID tied to bulkId and vice versa
+        bulkIdToVrfRequestID[bulkId] = vrf.requestRandomWords(
+            vrfHash,
+            subid,
+            minConfirmations,
+            callbackGasLimit,
+            uint32(requestNumbers)
+        );
+        vrfRequestToBulkId[bulkIdToVrfRequestID[bulkId]] = bulkId;
         // after this is called, then we can safely reset the array of rounds to play.
-
         // Increase BulkId count
         bulkId++;
         // reset the results array;
@@ -227,26 +244,43 @@ contract InfiniteLottery is
 
     function setReferral(address _newReferral) external {}
 
+    /**
+     * @notice Sets the Address of the discount locker
+     * @param _newLocker The address of the discount locker contract
+     * @dev only owner and does not require approve since the locker only receives funds
+     */
     function setDiscountLocker(address _newLocker) external onlyOwner {
         if (_newLocker == address(0) || discountLocker == _newLocker)
             revert InfiniteLottery__InvalidDiscountLocker();
         discountLocker = _newLocker;
     }
 
+    /**
+     * @notice Sets the Address of the dividend NFT
+     * @param _newDividendNFT The address of the new dividend NFT contract
+     * @dev only owner and requires USDC approval since the NFT contract needs to request funds from us.
+     */
     function setDividendNFT(address _newDividendNFT) external onlyOwner {
         if (
             _newDividendNFT == address(0) ||
             address(dividendNFT) == _newDividendNFT
         ) revert InfiniteLottery__InvalidDividendNFT();
         dividendNFT = IDividendNFT(_newDividendNFT);
+        USDC.approve(_newDividendNFT, type(uint).max); // max approval
     }
 
+    /**
+     * @notice Sets the Address of the weekly lottery
+     * @param _newWeeklyDraw The address of the new weekly lottery contract
+     * @dev only owner and requires USDC approval since the weekly lottery contract needs to request funds from us when adding to pot
+     */
     function setWeeklyLottery(address _newWeeklyDraw) external onlyOwner {
         if (
             _newWeeklyDraw == address(0) ||
             address(weeklyDrawLottery) == _newWeeklyDraw
         ) revert InfiniteLottery__InvalidWeeklyLottery();
         weeklyDrawLottery = IWeeklyLottery(_newWeeklyDraw);
+        USDC.approve(_newWeeklyDraw, type(uint).max); // max approval
     }
 
     //-------------------------------------------------------------------------
@@ -407,10 +441,18 @@ contract InfiniteLottery is
         winnerHub.distributeWinnings(_winner, ref, reward, refAmount);
     }
 
+    /**
+     * @notice This function distributes the non-win pot to the different pots as well as returns the amount of additional randomness requests that need to be fulfilled.
+     * @param pot The pot of the current level and round to be distributed
+     * @param currentLevel The current level being distributed
+     * @param currentLevelId The current ID of the level being distributed
+     * @param _bulkId The id of the bulk randomness request that needs to be fulfilled.
+     */
     function distributeNonWinPot(
         uint pot,
         uint currentLevel,
-        uint currentLevelId
+        uint currentLevelId,
+        uint _bulkId
     ) private returns (uint additionalRequests) {
         // DISTRIBUTE ROI
         uint potToDistribute = (pot * roiPot) / BASE_DISTRIBUTION;
@@ -427,7 +469,37 @@ contract InfiniteLottery is
         weeklyDrawLottery.addToPot(potToDistribute);
         // DISTRIBUTE Roll UP POT
         potToDistribute = (pot * rollupPot) / BASE_DISTRIBUTION;
-        // TODO logic to add to higher levels pot
+
+        uint nextLevel = currentLevel + 1;
+
+        uint forNextLevel = 10;
+        if (currentLevel == 1) forNextLevel = 20;
+
+        uint nextLevelId = (currentLevelId - 1) / forNextLevel + 1;
+        _higherLevels[nextLevel][nextLevelId].currentPot += potToDistribute;
+
+        emit NonWinsDistributed(currentLevel, currentLevelId);
+
+        if (nextLevelId % forNextLevel == 0) {
+            potToDistribute = _higherLevels[nextLevel][nextLevelId].currentPot;
+            _higherLevels[nextLevel][nextLevelId].bulkId = _bulkId;
+
+            WinnerInfo memory winnerLog = WinnerInfo({
+                level: nextLevel,
+                id: nextLevelId,
+                winnerAddress: address(0),
+                winnerNumber: 0
+            });
+            winnerInfo[bulkId].push(winnerLog);
+
+            additionalRequests = 1;
+            additionalRequests += distributeNonWinPot(
+                potToDistribute,
+                nextLevel,
+                nextLevelId,
+                _bulkId
+            );
+        }
     }
 
     // lets set this data when requesting random round info
