@@ -7,7 +7,6 @@ import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "./interfaces/ILottery.sol";
 import "./interfaces/IWinnerHub.sol";
-import {IUniswapV2Router02} from "./interfaces/IUniswap.sol";
 
 //-------------------------------------------------------------------------
 //    Errors
@@ -26,14 +25,11 @@ contract WinnerHub is ReentrancyGuard, Ownable, IWinnerHub {
     //-------------------------------------------------------------------------
     mapping(address _winner => uint _winAmount) public winnings;
     mapping(address _referrer => uint _refAmount) public referrals;
-    // @audit-issue Check the pairing stuff
-    // NEED TO GET IFL pairing
-    // NEED Price FEED based on pairing to USDC (if pairing is USDC, i think it's fine)
+
     IERC20 public USDC;
     // @audit-issue Check if 1 or multiple contracts will be used
     IERC721 public DividendNFT;
     ILottery public Lottery;
-    IUniswapV2Router02 public router;
     //-------------------------------------------------------------------------
     //    Events
     //-------------------------------------------------------------------------
@@ -49,16 +45,10 @@ contract WinnerHub is ReentrancyGuard, Ownable, IWinnerHub {
     //-------------------------------------------------------------------------
     //    Constructor
     //-------------------------------------------------------------------------
-    constructor(
-        address _usdc,
-        address _dividendNFT,
-        address _lottery,
-        address _router
-    ) {
+    constructor(address _usdc, address _dividendNFT, address _lottery) {
         USDC = IERC20(_usdc);
         DividendNFT = IERC721(_dividendNFT);
         Lottery = ILottery(_lottery);
-        router = IUniswapV2Router02(_router);
     }
 
     //-------------------------------------------------------------------------
