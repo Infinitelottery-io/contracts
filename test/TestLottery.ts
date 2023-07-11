@@ -44,7 +44,7 @@ describe("Lottery", function (){
       const { lottery, usdc, user1, user2 } = await loadFixture(lotteryStart);
       
       expect(await lottery.maxRoundIdPerLevel(1)).to.equal(1);
-      await expect( lottery.connect(user1).buyTickets(1, user2.address)).to.be.revertedWithCustomError(lottery, "MinimumTicketsNotReached").withArgs(10);
+      await expect( lottery.connect(user1).buyTickets(1, user2.address)).to.be.revertedWithCustomError(lottery, "InfiniteLottery__MinimumTicketsNotReached").withArgs(10);
       await expect( lottery.connect(user1).buyTickets(10, user2.address)).to.be.revertedWith("ERC20: insufficient allowance");
 
       await usdc.connect(user1).approve(lottery.address, parseEther("10000"));
@@ -67,15 +67,37 @@ describe("Lottery", function (){
       await usdc.connect(user2).approve(lottery.address, parseEther("10000"));
       await lottery.connect(user1).buyTickets(10000, zero);
       const participations = await lottery.allRoundsParticipatedIn(user1.address)
-      expect(participations.length).to.equal(12)
+      expect(participations.length).to.equal(16)
       for(let i = 1; i <= 12; i++){
         expect(await lottery.ticketsL1OnRoundId(i, user1.address)).to.equal(1000);
       }
+      expect(await lottery.ticketsL1OnRoundId(13, user1.address)).to.equal(400);
+      expect(await lottery.ticketsL1OnRoundId(14, user1.address)).to.equal(80);
+      expect(await lottery.ticketsL1OnRoundId(15, user1.address)).to.equal(16);
+      expect(await lottery.ticketsL1OnRoundId(16, user1.address)).to.equal(3);
+      expect(await lottery.getRoiLeftOver(15)).to.equal(parseEther("0.2"))
+
+
       expect(await lottery.maxRoundIdPerLevel(1)).to.equal(13);
       await lottery.connect(user2).buyTickets(1000, zero);
       expect(await lottery.maxRoundIdPerLevel(1)).to.equal(14);
-      expect(await lottery.ticketsL1OnRoundId(13, user2.address)).to.equal(1000);
-      expect(await lottery.ticketsL1OnRoundId(14, user2.address)).to.equal(200);
+      expect(await lottery.ticketsL1OnRoundId(13, user2.address)).to.equal(600);
+      expect((await lottery.getLevel1Info(14)).totalTickets).to.equal(480);
+      expect((await lottery.getLevel1Info(15)).totalTickets).to.equal(216);
+      expect((await lottery.getLevel1Info(16)).totalTickets).to.equal(43);
+      expect((await lottery.getLevel1Info(17)).totalTickets).to.equal(8);
+      expect((await lottery.getLevel1Info(18)).totalTickets).to.equal(1);
+    })
+    it("Should set roi overflow amounts on each round appropriately", async () => {
+      const { lottery, usdc, user1, user2 } = await loadFixture(lotteryStart);
+      await usdc.connect(user1).approve(lottery.address, parseEther("10000"));
+      await lottery.connect(user1).buyTickets(66, zero);
+
+      expect(await lottery.getRoiLeftOver(1)).to.equal(parseEther("0.2"))
+      expect(await lottery.getRoiLeftOver(2)).to.equal(parseEther("0.6"))
+      expect(await lottery.getRoiLeftOver(3)).to.equal(parseEther("0"))
+      // expect(await lottery.)
+
     })
     it("should set the current round to be able to request plays", async () => {
       const { lottery, usdc, user1, user2 } = await loadFixture(lotteryStart);
