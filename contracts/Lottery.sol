@@ -11,7 +11,7 @@ import "./interfaces/IWinnerHub.sol";
 import "./interfaces/IDividendNFT.sol";
 import "./interfaces/IWeeklyLottery.sol";
 // TODO REMOVE TEST LIBRARY
-import "forge-std/console.sol";
+import "forge-std/console2.sol";
 
 error InfiniteLottery__NoRoundsToPlay();
 error InfiniteLottery__MinimumTicketsNotReached(uint minTickets);
@@ -57,6 +57,7 @@ contract InfiniteLottery is
         uint level;
         uint id;
         uint winnerNumber;
+        uint winnerL1Index;
         address winnerAddress;
     }
     struct UserParticipations {
@@ -96,8 +97,6 @@ contract InfiniteLottery is
     address public teamWallet;
 
     uint private bulkId = 0; // current id of the bulk of winner info to get
-    uint public currentHighest; // Current highest with prize pot associated with it.
-    uint public currentWeeklyRound;
     uint public constant ticketsPerL1 = 1000;
     uint public constant l1Advancement = 20; // 20 rounds of L1 for a L2
     uint public constant upperAdvancement = 10; // 10 rounds of any upper level to the next level
@@ -111,12 +110,17 @@ contract InfiniteLottery is
     uint public weeklyPot = 2;
     uint public constant BASE_DISTRIBUTION = 100;
     uint public MINIMUM_TICKETS_PER_BUY = 10;
+    uint public pendingBulkRequested;
+    uint private cumulativeDiscount;
+    uint private cumulativeDividends;
+    uint private cumulativeTeam;
+    uint private cumulativeWeekly;
 
     // VRF Stuff
     bytes32 private vrfHash;
     uint64 private subid;
     uint16 private minConfirmations = 3; // default
-    uint32 private callbackGasLimit = 100000; // initial value allegedly it costs
+    uint32 private callbackGasLimit = 500_000; // initial value allegedly it costs
 
     //-------------------------------------------------------------------------
     //    EVENTS
@@ -130,6 +134,13 @@ contract InfiniteLottery is
     event SetNewMinimumTicketBuy(uint prev, uint _new);
     event AdvanceRound(uint level, uint newRoundId);
     event NonWinsDistributed(uint indexed level, uint indexed roundId);
+    event WinnerInfoSet(
+        uint indexed level,
+        uint indexed roundId,
+        uint indexed level1,
+        uint winnerNumber,
+        address winnerAddress
+    );
 
     // numwords to request has a max of 500.
 
@@ -182,20 +193,26 @@ contract InfiniteLottery is
             );
         require(maxRoundIdPerLevel[1] == 0, "Already started");
         maxRoundIdPerLevel[1] = 1;
-        _higherLevels[2][1] = UpperLevels(1, 0, 0, 0, 0);
         emit LotteryStarted(block.timestamp);
     }
 
-    function buyTickets(uint _ticketAmount, address _referral) external {
+    function buyTickets(
+        uint _ticketAmount,
+        address _referral,
+        bool allowPlay
+    ) external {
         _buyTickets(_ticketAmount, _referral, msg.sender);
+        if (allowPlay && roundsToPlay.length > 0) playRounds();
     }
 
     function buyTicketsForUser(
         uint _ticketAmount,
         address _referral,
-        address _user
+        address _user,
+        bool allowPlay
     ) external {
         _buyTickets(_ticketAmount, _referral, _user);
+        if (allowPlay && roundsToPlay.length > 0) playRounds();
     }
 
     // This will be called by the contract itself to advance rounds internally
@@ -204,7 +221,6 @@ contract InfiniteLottery is
     function playRounds() public nonReentrant {
         // make sure that there are rounds to play
         if (roundsToPlay.length == 0) revert InfiniteLottery__NoRoundsToPlay();
-        console.log("Here");
         uint requestNumbers;
         uint round1Pot = ticketsPerL1 * ticketPrice;
 
@@ -212,7 +228,6 @@ contract InfiniteLottery is
         // Start to loop through available rounds to play
         for (uint i = 0; i < roundsToPlay.length; i++) {
             uint currentL1Round = roundsToPlay[i];
-            console.log("Current L1 %s", currentL1Round);
             // We need to transfer out the roiOverflow
             // Distribute POT to next round and other users (?) OR do we do this after we have the winner tickets picked?
             Level1Participants storage level1 = _level1[currentL1Round];
@@ -220,6 +235,7 @@ contract InfiniteLottery is
                 level: 1,
                 id: roundsToPlay[i],
                 winnerAddress: address(0),
+                winnerL1Index: 0,
                 winnerNumber: 0
             });
             // Record where the info for the winner is stored
@@ -233,22 +249,36 @@ contract InfiniteLottery is
                 currentL1Round,
                 bulkId
             );
-            console.log("Request Numbers %s", requestNumbers);
             if (level1.users.length == 1) {
                 winnerLog.winnerAddress = level1.users[0];
                 distributeWins(winnerLog.winnerAddress, round1Pot);
+                emit WinnerInfoSet(
+                    winnerLog.level,
+                    winnerLog.id,
+                    winnerLog.id,
+                    winnerLog.winnerNumber,
+                    winnerLog.winnerAddress
+                );
             } else requestNumbers++;
-
             winnerChoose.push(winnerLog);
         }
+        // Make a cumulative Non wins transfers
+        transferOutNonWins();
+        if (requestNumbers > 0) {
+            pendingBulkRequested = requestNumbers;
+            bulkIdToVrfRequestID[bulkId] = vrf.requestRandomWords(
+                vrfHash,
+                subid,
+                minConfirmations,
+                callbackGasLimit,
+                uint32(requestNumbers)
+            );
+        } else {
+            pendingBulkRequested = 0;
+            // if bulkId => 0 then we can assume that no random request was made
+            bulkIdToVrfRequestID[bulkId] = 0;
+        }
         // Request the random numbers from the VRF and stores request ID tied to bulkId and vice versa
-        bulkIdToVrfRequestID[bulkId] = vrf.requestRandomWords(
-            vrfHash,
-            subid,
-            minConfirmations,
-            callbackGasLimit,
-            uint32(requestNumbers)
-        );
         vrfRequestToBulkId[bulkIdToVrfRequestID[bulkId]] = bulkId;
         // after this is called, then we can safely reset the array of rounds to play.
         // Increase BulkId count
@@ -328,8 +358,74 @@ contract InfiniteLottery is
         uint requestId,
         uint256[] memory randomWords
     ) internal override {
-        console.log("Fulfill request", requestId, randomWords.length);
-        //TODO Still pending implementation
+        pendingBulkRequested = 0;
+        //get the bulkId that belongs to this requestId
+        uint _bulkId = vrfRequestToBulkId[requestId];
+        WinnerInfo[] storage winnerChoose = winnerInfo[_bulkId];
+        // get the winnerInfo array associated with bulkID and loop through it to select the winners
+        uint totalWinners = winnerChoose.length;
+        uint offset = 0;
+        for (uint i = 0; i < totalWinners; i++) {
+            WinnerInfo storage winner = winnerChoose[i];
+            if (winner.winnerAddress != address(0)) {
+                offset++;
+                continue;
+            }
+
+            if (winner.level == 1) {
+                _selectL1Winner(winner, winner.id, randomWords[i - offset]);
+                uint pot = ticketsPerL1 * ticketPrice;
+                distributeWins(winner.winnerAddress, pot);
+                emit WinnerInfoSet(
+                    winner.level,
+                    winner.id,
+                    winner.id,
+                    winner.winnerNumber,
+                    winner.winnerAddress
+                );
+                continue;
+            }
+            UpperLevels storage upperLevel = _higherLevels[winner.level][
+                winner.id
+            ];
+            uint l1Index = upperLevel.maxL1 - upperLevel.minL1 + 1;
+            console2.log(
+                "uppers %s, min %s, l1Index %s",
+                upperLevel.maxL1,
+                upperLevel.minL1,
+                l1Index
+            );
+            winner.winnerL1Index = (randomWords[i] % l1Index) + 1; // select one level 1 as a winner
+            l1Index = (randomWords[i] - winner.winnerL1Index);
+
+            _selectL1Winner(winner, winner.winnerL1Index, l1Index);
+            distributeWins(winner.winnerAddress, upperLevel.currentPot);
+            emit WinnerInfoSet(
+                winner.level,
+                winner.id,
+                winner.winnerL1Index,
+                winner.winnerNumber,
+                winner.winnerAddress
+            );
+        }
+    }
+
+    function _selectL1Winner(
+        WinnerInfo storage _winnerInfo,
+        uint level1Id,
+        uint _winnerNumber
+    ) internal {
+        uint winnerIndex = _winnerNumber % ticketsPerL1;
+        _winnerInfo.winnerNumber = winnerIndex;
+        Level1Participants storage level1 = _level1[level1Id];
+        for (uint j = 0; j < level1.users.length; j++) {
+            if (level1.ticketsPerUser[j] < winnerIndex) {
+                winnerIndex -= level1.ticketsPerUser[j];
+                continue;
+            }
+            _winnerInfo.winnerAddress = level1.users[j];
+            break;
+        }
     }
 
     //-------------------------------------------------------------------------
@@ -469,11 +565,10 @@ contract InfiniteLottery is
      */
     function distributeWins(address _winner, uint pot) private {
         address ref = userParticipations[_winner].referral;
-        uint refAmount = 0;
-        if (ref != address(0)) {
-            refAmount = (pot * referralPot) / BASE_DISTRIBUTION;
-        }
+        uint refAmount = (pot * referralPot) / BASE_DISTRIBUTION;
         uint reward = (pot * winnerPot) / BASE_DISTRIBUTION;
+
+        if (ref == address(0)) ref = teamWallet;
 
         winnerHub.distributeWinnings(_winner, ref, reward, refAmount);
     }
@@ -493,39 +588,60 @@ contract InfiniteLottery is
     ) private returns (uint additionalRequests) {
         // DISTRIBUTE ROI
         uint potToDistribute = (pot * roiPot) / BASE_DISTRIBUTION;
-        console.log("potToDistribute", potToDistribute);
+        uint forNextLevel = 20;
+
         // If current Level is 1, roi distribution already happened in the form of tickets
-        if (currentLevel > 1) USDC.transfer(discountLocker, potToDistribute);
+        if (currentLevel > 1) {
+            //USDC.transfer(discountLocker, potToDistribute);
+            cumulativeDiscount += potToDistribute;
+            forNextLevel = 10;
+        }
         // DISTRIBUTE DIVIDENDS
         potToDistribute = (pot * dividendPot) / BASE_DISTRIBUTION;
-        dividendNFT.distributeDividends(potToDistribute);
+        // dividendNFT.distributeDividends(potToDistribute);
+        cumulativeDividends += potToDistribute;
         // DISTRIBUTE TEAM
         potToDistribute = (pot * teamPot) / BASE_DISTRIBUTION;
-        USDC.transfer(teamWallet, potToDistribute);
+        cumulativeTeam += potToDistribute;
+        // USDC.transfer(teamWallet, potToDistribute);
         // DISTRIBUTE WEEKLY POT
         potToDistribute = (pot * weeklyPot) / BASE_DISTRIBUTION;
-        weeklyDrawLottery.addToPot(potToDistribute);
+        cumulativeWeekly += potToDistribute;
+        // weeklyDrawLottery.addToPot(potToDistribute);
         // DISTRIBUTE Roll UP POT
         potToDistribute = (pot * rollupPot) / BASE_DISTRIBUTION;
 
         uint nextLevel = currentLevel + 1;
 
-        uint forNextLevel = 10;
-        if (currentLevel == 1) forNextLevel = 20;
-
         uint nextLevelId = (currentLevelId - 1) / forNextLevel + 1;
-        _higherLevels[nextLevel][nextLevelId].currentPot += potToDistribute;
+        UpperLevels storage nextLevelInfo = _higherLevels[nextLevel][
+            nextLevelId
+        ];
+        nextLevelInfo.currentPot += potToDistribute;
+        if (nextLevelInfo.minL1 == 0) {
+            if (currentLevel == 1) nextLevelInfo.minL1 = currentLevelId;
+            else
+                nextLevelInfo.minL1 = _higherLevels[currentLevel][
+                    currentLevelId
+                ].minL1;
+            maxRoundIdPerLevel[nextLevel] = nextLevelId;
+        }
 
         emit NonWinsDistributed(currentLevel, currentLevelId);
-
-        if (nextLevelId % forNextLevel == 0) {
-            potToDistribute = _higherLevels[nextLevel][nextLevelId].currentPot;
-            _higherLevels[nextLevel][nextLevelId].bulkId = _bulkId;
-
+        if (currentLevelId % forNextLevel == 0) {
+            maxRoundIdPerLevel[nextLevel] = nextLevelId + 1;
+            potToDistribute = nextLevelInfo.currentPot;
+            nextLevelInfo.bulkId = _bulkId;
+            if (currentLevel == 1) nextLevelInfo.maxL1 = currentLevelId;
+            else
+                nextLevelInfo.maxL1 = _higherLevels[currentLevel][
+                    currentLevelId
+                ].maxL1;
             WinnerInfo memory winnerLog = WinnerInfo({
                 level: nextLevel,
                 id: nextLevelId,
                 winnerAddress: address(0),
+                winnerL1Index: 0,
                 winnerNumber: 0
             });
             winnerInfo[bulkId].push(winnerLog);
@@ -540,33 +656,19 @@ contract InfiniteLottery is
         }
     }
 
-    // lets set this data when requesting random round info
-    // function queueHigherLevelToPlay(uint currentLevel, uint currentId) private {
-    //     bool advances;
-    //     uint requirement = currentLevel == 1 ? l1Advancement : upperAdvancement;
-    //     advances = currentId % requirement == 0;
+    function transferOutNonWins() private {
+        if (cumulativeDiscount > 0)
+            USDC.transfer(discountLocker, cumulativeDiscount);
+        if (cumulativeDividends > 0)
+            dividendNFT.distributeDividends(cumulativeDividends);
+        if (cumulativeTeam > 0) USDC.transfer(teamWallet, cumulativeTeam);
+        if (cumulativeWeekly > 0) weeklyDrawLottery.addToPot(cumulativeWeekly);
 
-    //     if (advances) {
-    //         // set the maxL1 for the previous upper level ID
-    //         uint nextLevel = currentLevel + 1;
-    //         uint nextId = maxRoundIdPerLevel[nextLevel];
-    //         // set the max of current nextLevel
-    //         _higherLevels[nextLevel][nextId].maxL1 = currentId;
-    //         // get the next max Id to set the minimum
-    //         nextId ++;
-    //         // Set the minimum of the next level Round
-    //         if(currentLevel == 1) // if next Level is 2
-    //           _higherLevels[nextLevel][nextId].minL1 = currentId + 1;
-    //         else{
-    //           _higherLevels[nextLevel][nextId].minL1 = _higherLevels[currentLevel][currentId + 1].minL1;
-    //         }
-    //         // increase current ID
-    //         nextId = currentId + 1;
-    //         maxRoundIdPerLevel[currentLevel] = nextId;
-    //         emit AdvanceRound(currentId, nextId);
-    //         queueHigherLevelToPlay(nextLevel, nextId);
-    //     }
-    // }
+        cumulativeDiscount = 0;
+        cumulativeDividends = 0;
+        cumulativeTeam = 0;
+        cumulativeWeekly = 0;
+    }
 
     //-------------------------------------------------------------------------
     //    External & Public VIEW functions
@@ -635,7 +737,15 @@ contract InfiniteLottery is
         uint level,
         uint roundId
     ) external view returns (address) {
-        // todo!!!!!
-        return address(0);
+        uint _bulkId;
+        uint winnerIndex;
+        if (level == 1) {
+            _bulkId = _level1[roundId].bulkId;
+            winnerIndex = _level1[roundId].winnerIndex;
+        } else {
+            _bulkId = _higherLevels[level][roundId].bulkId;
+            winnerIndex = _higherLevels[level][roundId].winnerIndex;
+        }
+        return winnerInfo[_bulkId][winnerIndex].winnerAddress;
     }
 }
