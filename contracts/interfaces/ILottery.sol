@@ -8,7 +8,11 @@ interface ILottery {
     /// @dev extra things that this does:
     ///         - Request winner for level 1 (when it ends)
     ///         - Request winner for higher levels (when it applies)
-    function buyTickets(uint _ticketAmount, address _referral) external;
+    function buyTickets(
+        uint _ticketAmount,
+        address _referral,
+        bool autoplay
+    ) external;
 
     /// @notice This function works the same as the previous buyTickets function except the tickets are approved to a user in particular
     /// @param _ticketAmount the amount of tickets to buy
@@ -18,7 +22,8 @@ interface ILottery {
     function buyTicketsForUser(
         uint _ticketAmount,
         address _referral,
-        address _user
+        address _user,
+        bool autoplay
     ) external;
 
     /// @notice returns the current price of a ticket
@@ -39,6 +44,4 @@ interface ILottery {
     /// @notice sets a new Minimum Ticket buy amount
     /// @param _newAmount the amount of tickets that the minimum will be
     function setMinimumTicketBuy(uint _newAmount) external;
-
-    
 }

@@ -62,6 +62,7 @@ contract InfiniteLottery is
     }
     struct UserParticipations {
         uint[] participationsL1;
+        uint lastParticipation; // TODO add this to the buy tickets function
         address referral;
     }
     struct UserRoundInfo {
@@ -72,6 +73,7 @@ contract InfiniteLottery is
     //-------------------------------------------------------------------------
     //    State Variables
     //-------------------------------------------------------------------------
+    mapping(address => bool) private minExcluded;
     mapping(uint _level => mapping(uint _id => UpperLevels))
         private _higherLevels;
     mapping(uint _round => Level1Participants) private _level1;
@@ -120,7 +122,7 @@ contract InfiniteLottery is
     bytes32 private vrfHash;
     uint64 private subid;
     uint16 private minConfirmations = 3; // default
-    uint32 private callbackGasLimit = 500_000; // initial value allegedly it costs
+    uint32 private callbackGasLimit = 2_000_000; // todo NEED ABILITY TO CHANGE GAS LIMIT
 
     //-------------------------------------------------------------------------
     //    EVENTS
@@ -295,7 +297,9 @@ contract InfiniteLottery is
 
     function setWinnerHub(address _hub) external onlyOwner {
         if (_hub == address(0)) revert InfiniteLottery__InvalidWinnerHub();
+        minExcluded[address(winnerHub)] = false;
         winnerHub = IWinnerHub(_hub);
+        minExcluded[address(winnerHub)] = true;
         USDC.approve(_hub, type(uint).max); // max approval
     }
 
@@ -326,7 +330,13 @@ contract InfiniteLottery is
             _newDividendNFT == address(0) ||
             address(dividendNFT) == _newDividendNFT
         ) revert InfiniteLottery__InvalidDividendNFT();
+
+        minExcluded[address(dividendNFT)] = false;
+
         dividendNFT = IDividendNFT(_newDividendNFT);
+
+        minExcluded[address(dividendNFT)] = true;
+
         USDC.approve(_newDividendNFT, type(uint).max); // max approval
     }
 
@@ -438,7 +448,7 @@ contract InfiniteLottery is
         address _user
     ) private nonReentrant {
         require(maxRoundIdPerLevel[1] > 0, "Not started");
-        if (_ticketAmount < MINIMUM_TICKETS_PER_BUY)
+        if (!minExcluded[msg.sender] && _ticketAmount < MINIMUM_TICKETS_PER_BUY)
             revert InfiniteLottery__MinimumTicketsNotReached(
                 MINIMUM_TICKETS_PER_BUY
             );
@@ -511,6 +521,8 @@ contract InfiniteLottery is
      *   @param amount ticket amount to create, can go above max l1 tickets
      *   @param levelId the l1 id where tickets are added
      *   @param generatesROI this should only be true once on buys, rest of time should be false
+     *   @param _user The user that gets the tickets
+     *   @param userPlaying STORAGE user Round info
      *   @return leftoverTickets the amount of tickets that overflow current round
      *   @return nextId the next level 1 round
      *   @return roiTickets the amount of tickets to claim for the next round
@@ -579,6 +591,7 @@ contract InfiniteLottery is
      * @param currentLevel The current level being distributed
      * @param currentLevelId The current ID of the level being distributed
      * @param _bulkId The id of the bulk randomness request that needs to be fulfilled.
+     * @return additionalRequests The amount of additional requests that need to be fulfilled
      */
     function distributeNonWinPot(
         uint pot,
