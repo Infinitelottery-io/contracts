@@ -18,4 +18,16 @@ contract WeeklyLottery is IWeeklyLottery {
         usdc.transferFrom(msg.sender, address(this), amount);
         pot += amount;
     }
+    // Assure that NFT holders are automatically added to players list.
+    // 3 NFTs need to be held to be eligible for the lottery.
+
+    // Distribution
+    /**
+        70% for a single winner.
+        10% for the next weekly pot.
+        10% dividends.
+        5% referral system.
+        5% for the team.
+        5% referral system.
+     */
 }
