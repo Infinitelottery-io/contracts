@@ -73,7 +73,7 @@ contract WinnerHub is ReentrancyGuard, Ownable, IWinnerHub {
         emit ReceivedWinnings(_winner, _referral, _winAmount, _refAmount);
     }
 
-    function claimWinner() external {
+    function claimWinner() external nonReentrant {
         uint winAmount = winnings[msg.sender];
         if (winAmount == 0) revert WinnerHub__NoWinnings();
 
@@ -92,6 +92,7 @@ contract WinnerHub is ReentrancyGuard, Ownable, IWinnerHub {
         bool succ;
 
         //TODO pending to check referral logic
+        // 10% of the winnings will be for buy tickets
         succ = USDC.transfer(msg.sender, amountToClaim);
         if (!succ) revert WinnerHub__RefTransferError();
         emit ClaimReferrerWinnings(msg.sender, amountToClaim);
