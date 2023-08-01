@@ -97,7 +97,7 @@ contract DiscountBooth is Ownable, ReentrancyGuard {
         uint costWithDiscount = totalCost - discount;
         USDC.transferFrom(msg.sender, address(this), costWithDiscount);
         emit DiscountApplied(msg.sender, ticketsToBuy, costWithDiscount);
-        lottery.buyTicketsForUser(ticketsToBuy, _referral, msg.sender);
+        lottery.buyTicketsForUser(ticketsToBuy, _referral, msg.sender, false);
     }
 
     /// @notice Update the Lottery address in case of a redeploy
