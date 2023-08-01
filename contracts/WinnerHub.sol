@@ -92,6 +92,7 @@ contract WinnerHub is ReentrancyGuard, Ownable, IWinnerHub {
         bool succ;
 
         //TODO pending to check referral logic
+        // TODO check referral has referral NFT
         // 10% of the winnings will be for buy tickets
         succ = USDC.transfer(msg.sender, amountToClaim);
         if (!succ) revert WinnerHub__RefTransferError();
