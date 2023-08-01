@@ -405,7 +405,10 @@ contract InfiniteLottery is
                 upperLevel.minL1,
                 l1Index
             );
-            winner.winnerL1Index = (randomWords[i] % l1Index) + 1; // select one level 1 as a winner
+            winner.winnerL1Index =
+                (randomWords[i] % l1Index) +
+                upperLevel.minL1; // select one level 1 as a winner
+
             l1Index = (randomWords[i] - winner.winnerL1Index);
 
             _selectL1Winner(winner, winner.winnerL1Index, l1Index);
