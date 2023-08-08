@@ -3,7 +3,7 @@ pragma solidity 0.8.19;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
+import "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "./interfaces/ILottery.sol";
 import "./interfaces/IWinnerHub.sol";
@@ -18,6 +18,7 @@ error WinnerHub__InvalidLotteryAddress();
 error WinnerHub__LotteryAlreadySet();
 error WinnerHub__NFTAlreadySet();
 error WinnerHub__InvalidNFTAddress();
+error WinnerHub__NoReferralNFTDetected();
 
 contract WinnerHub is ReentrancyGuard, Ownable, IWinnerHub {
     //-------------------------------------------------------------------------
@@ -28,7 +29,7 @@ contract WinnerHub is ReentrancyGuard, Ownable, IWinnerHub {
 
     IERC20 public USDC;
     // @audit-issue Check if 1 or multiple contracts will be used
-    IERC721 public DividendNFT;
+    IERC1155 public ReferralNFT;
     ILottery public Lottery;
     //-------------------------------------------------------------------------
     //    Events
@@ -45,10 +46,11 @@ contract WinnerHub is ReentrancyGuard, Ownable, IWinnerHub {
     //-------------------------------------------------------------------------
     //    Constructor
     //-------------------------------------------------------------------------
-    constructor(address _usdc, address _dividendNFT, address _lottery) {
+    constructor(address _usdc, address _referralNFT, address _lottery) {
         USDC = IERC20(_usdc);
-        DividendNFT = IERC721(_dividendNFT);
+        ReferralNFT = IERC1155(_referralNFT);
         Lottery = ILottery(_lottery);
+        USDC.approve(_lottery, type(uint256).max);
     }
 
     //-------------------------------------------------------------------------
@@ -82,18 +84,21 @@ contract WinnerHub is ReentrancyGuard, Ownable, IWinnerHub {
         emit ClaimWinnings(msg.sender, winAmount);
     }
 
-    /**
-     * @notice Claim referral rewards
-     * @dev is msg.sender has a Dividend NFT then we can skip the burning of IFL
-     */
     function claimReferral() external nonReentrant {
         uint amountToClaim = referrals[msg.sender];
+        if (amountToClaim == 0) revert WinnerHub__NoWinnings();
         referrals[msg.sender] = 0;
         bool succ;
 
-        //TODO pending to check referral logic
-        // TODO check referral has referral NFT
+        //Check referral logic
+        // check referral has referral NFT
+        if (ReferralNFT.balanceOf(msg.sender, 1) == 0)
+            revert WinnerHub__NoReferralNFTDetected();
         // 10% of the winnings will be for buy tickets
+        uint ticketsToBuy = amountToClaim / 10;
+        amountToClaim -= ticketsToBuy;
+        Lottery.buyTicketsForUser(ticketsToBuy, address(0), msg.sender, false);
+
         succ = USDC.transfer(msg.sender, amountToClaim);
         if (!succ) revert WinnerHub__RefTransferError();
         emit ClaimReferrerWinnings(msg.sender, amountToClaim);
@@ -103,12 +108,14 @@ contract WinnerHub is ReentrancyGuard, Ownable, IWinnerHub {
         if (address(_lottery) != address(0))
             revert WinnerHub__LotteryAlreadySet();
         if (_lottery == address(0)) revert WinnerHub__InvalidLotteryAddress();
+        USDC.approve(address(Lottery), 0);
         Lottery = ILottery(_lottery);
+        USDC.approve(_lottery, type(uint256).max);
     }
 
     function updateNFTAddress(address _nft) external onlyOwner {
         if (address(_nft) != address(0)) revert WinnerHub__NFTAlreadySet();
         if (_nft == address(0)) revert WinnerHub__InvalidNFTAddress();
-        DividendNFT = IERC721(_nft);
+        ReferralNFT = IERC1155(_nft);
     }
 }
