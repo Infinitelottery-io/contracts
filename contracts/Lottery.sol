@@ -10,8 +10,6 @@ import "./interfaces/ILottery.sol";
 import "./interfaces/IWinnerHub.sol";
 import "./interfaces/IDividendNFT.sol";
 import "./interfaces/IWeeklyLottery.sol";
-// TODO REMOVE TEST LIBRARY
-import "forge-std/console2.sol";
 
 error InfiniteLottery__NoRoundsToPlay();
 error InfiniteLottery__MinimumTicketsNotReached(uint minTickets);
@@ -399,12 +397,6 @@ contract InfiniteLottery is
                 winner.id
             ];
             uint l1Index = upperLevel.maxL1 - upperLevel.minL1 + 1;
-            console2.log(
-                "uppers %s, min %s, l1Index %s",
-                upperLevel.maxL1,
-                upperLevel.minL1,
-                l1Index
-            );
             winner.winnerL1Index =
                 (randomWords[i] % l1Index) +
                 upperLevel.minL1; // select one level 1 as a winner
