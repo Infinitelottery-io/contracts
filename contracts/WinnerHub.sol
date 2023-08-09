@@ -97,6 +97,7 @@ contract WinnerHub is ReentrancyGuard, Ownable, IWinnerHub {
         // 10% of the winnings will be for buy tickets
         uint ticketsToBuy = amountToClaim / 10;
         amountToClaim -= ticketsToBuy;
+        ticketsToBuy /= 1 ether;
         Lottery.buyTicketsForUser(ticketsToBuy, address(0), msg.sender, false);
 
         succ = USDC.transfer(msg.sender, amountToClaim);
