@@ -575,7 +575,10 @@ contract InfiniteLottery is
         uint refAmount = (pot * referralPot) / BASE_DISTRIBUTION;
         uint reward = (pot * winnerPot) / BASE_DISTRIBUTION;
 
-        if (ref == address(0)) ref = teamWallet;
+        if (ref == address(0)) {
+            dividendNFT.distributeDividends(refAmount);
+            refAmount = 0;
+        }
 
         winnerHub.distributeWinnings(_winner, ref, reward, refAmount);
     }
