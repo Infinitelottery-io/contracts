@@ -10,6 +10,7 @@ import "./interfaces/ILottery.sol";
 import "./interfaces/IWinnerHub.sol";
 import "./interfaces/IDividendNFT.sol";
 import "./interfaces/IWeeklyLottery.sol";
+import "forge-std/console.sol";
 
 error InfiniteLottery__NoRoundsToPlay();
 error InfiniteLottery__MinimumTicketsNotReached(uint minTickets);
@@ -37,11 +38,12 @@ contract InfiniteLottery is
     //    Type Declarations
     //-------------------------------------------------------------------------
     struct Level1Participants {
-        uint[] ticketsPerUser;
         uint totalTickets;
         uint roiOverflow;
         uint bulkId; // We'll only be using a single request ID for multiple levels, the winner will be using shifted values from the randomness
         uint winnerIndex;
+        uint[] ticketsPerUser;
+        uint[] roiTicketsPerUser;
         address[] users;
     }
     struct UpperLevels {
@@ -171,6 +173,7 @@ contract InfiniteLottery is
         USDC = IERC20(_usdc);
         ticketPrice = _ticketPrice;
         subid = _vrfSubId;
+        minExcluded[address(this)] = true;
     }
 
     //-------------------------------------------------------------------------
@@ -200,9 +203,15 @@ contract InfiniteLottery is
         uint _ticketAmount,
         address _referral,
         bool allowPlay
-    ) external {
-        _buyTickets(_ticketAmount, _referral, msg.sender);
-        if (allowPlay && roundsToPlay.length > 0) playRounds();
+    ) external nonReentrant {
+        uint potAmount = _buyTickets(
+            _ticketAmount,
+            _referral,
+            msg.sender,
+            msg.sender
+        );
+        _addToPot(potAmount);
+        if (allowPlay && roundsToPlay.length > 0) _playRounds();
     }
 
     function buyTicketsForUser(
@@ -211,14 +220,24 @@ contract InfiniteLottery is
         address _user,
         bool allowPlay
     ) external {
-        _buyTickets(_ticketAmount, _referral, _user);
-        if (allowPlay && roundsToPlay.length > 0) playRounds();
+        uint potAmount = _buyTickets(
+            _ticketAmount,
+            _referral,
+            _user,
+            msg.sender
+        );
+        _addToPot(potAmount);
+        if (allowPlay && roundsToPlay.length > 0) _playRounds();
+    }
+
+    function playRounds() external nonReentrant {
+        _playRounds();
     }
 
     // This will be called by the contract itself to advance rounds internally
     // honestly this is mainly for testing purposes. But it's a good way to do it in case someone decides to
     // buy a lot of tickets from the get go.
-    function playRounds() public nonReentrant {
+    function _playRounds() private {
         // make sure that there are rounds to play
         if (roundsToPlay.length == 0) revert InfiniteLottery__NoRoundsToPlay();
         uint requestNumbers;
@@ -249,6 +268,7 @@ contract InfiniteLottery is
                 currentL1Round,
                 bulkId
             );
+            _distributeRoiTickets(level1);
             if (level1.users.length == 1) {
                 winnerLog.winnerAddress = level1.users[0];
                 distributeWins(winnerLog.winnerAddress, round1Pot);
@@ -436,20 +456,44 @@ contract InfiniteLottery is
     //-------------------------------------------------------------------------
     //    Private Functions
     //-------------------------------------------------------------------------
+    /**
+     * Creates the ROI tickets for all addresses that participated in the Level1Participants
+     * @param participants All participants for the ROI ticket distribution of this played round
+     */
+    function _distributeRoiTickets(
+        Level1Participants storage participants
+    ) private {
+        uint totalParticipants = participants.users.length;
+
+        for (uint i = 0; i < totalParticipants; i++) {
+            uint userRoiTickets = participants.roiTicketsPerUser[i];
+            address ticketOwner = participants.users[i];
+            UserParticipations storage userPlays = userParticipations[
+                ticketOwner
+            ];
+            // This does not transfer IN tokens so it doesn't require a USDC.transferFrom
+            _buyTickets(
+                userRoiTickets,
+                userPlays.referral,
+                ticketOwner,
+                address(this)
+            );
+        }
+    }
 
     function _buyTickets(
         uint _ticketAmount,
         address _referral,
-        address _user
-    ) private nonReentrant {
+        address _user,
+        address sender
+    ) private returns (uint potAddition) {
         require(maxRoundIdPerLevel[1] > 0, "Not started");
-        if (!minExcluded[msg.sender] && _ticketAmount < MINIMUM_TICKETS_PER_BUY)
+        if (!minExcluded[sender] && _ticketAmount < MINIMUM_TICKETS_PER_BUY)
             revert InfiniteLottery__MinimumTicketsNotReached(
                 MINIMUM_TICKETS_PER_BUY
             );
         UserParticipations storage userPlays = userParticipations[_user];
         uint leftovers;
-        uint roiTickets;
         uint level1Played = maxRoundIdPerLevel[1];
         UserRoundInfo storage userPlaying = userTickets[_user][level1Played];
         // set referral
@@ -459,7 +503,7 @@ contract InfiniteLottery is
             _referral != address(0)
         ) userPlays.referral = _referral;
         // SET TICKETS THAT ARE BOUGHT
-        (leftovers, level1Played, roiTickets) = _createTickets(
+        (leftovers, level1Played) = _createTickets(
             _ticketAmount,
             level1Played,
             true,
@@ -470,7 +514,7 @@ contract InfiniteLottery is
         if (leftovers > 0) {
             do {
                 userPlaying = userTickets[_user][level1Played];
-                (leftovers, level1Played, ) = _createTickets(
+                (leftovers, level1Played) = _createTickets(
                     leftovers,
                     level1Played,
                     false,
@@ -479,37 +523,14 @@ contract InfiniteLottery is
                 );
             } while (leftovers > 0);
         }
-        // NOW SET THE ROI TICKETS FOR THE NEXT ROUND
-        do {
-            userPlaying = userTickets[_user][level1Played];
-            (leftovers, level1Played, roiTickets) = _createTickets(
-                roiTickets,
-                level1Played,
-                roiTickets >= 5,
-                _user,
-                userPlaying
-            );
-            // IF NEXT ROUND OVERFLOW... this scenario might not be needed
-            // but who really knows how crazy rich people think. Better safe than sorry
-            if (leftovers > 0) {
-                do {
-                    userPlaying = userTickets[_user][level1Played];
-                    (leftovers, level1Played, ) = _createTickets(
-                        leftovers,
-                        level1Played,
-                        false,
-                        _user,
-                        userPlaying
-                    );
-                } while (leftovers > 0);
-            }
-        } while (roiTickets > 0);
+        // ROI tickets will be moved to when round ends
 
-        // Transfer money in
-        uint potAddition = _ticketAmount * ticketPrice;
-        USDC.transferFrom(msg.sender, address(this), potAddition);
-        // check roiPot amount, if it's not a multiple of 1 ether
-        // the remainder needs to be sent to  team wallet.
+        // Money to Transfer IN (need to call addToPot if necessary)
+        potAddition = _ticketAmount * ticketPrice;
+    }
+
+    function _addToPot(uint amount) private {
+        USDC.transferFrom(msg.sender, address(this), amount);
     }
 
     /** @notice Creates in a level for the user
@@ -520,8 +541,9 @@ contract InfiniteLottery is
      *   @param userPlaying STORAGE user Round info
      *   @return leftoverTickets the amount of tickets that overflow current round
      *   @return nextId the next level 1 round
-     *   @return roiTickets the amount of tickets to claim for the next round
-     *   @dev roiLeftOver  the amount (in cents) of what should go to the discount pool
+     *  // INTERNAL VARIABLES
+     *   @dev roiLeftOver is the amount (in cents) of what should go to the discount pool
+     *   @dev roiTickets is the amount of tickets to claim for the next round
      **/
     function _createTickets(
         uint amount,
@@ -529,14 +551,16 @@ contract InfiniteLottery is
         bool generatesROI,
         address _user,
         UserRoundInfo storage userPlaying
-    ) private returns (uint leftoverTickets, uint nextId, uint roiTickets) {
+    ) private returns (uint leftoverTickets, uint nextId) {
         uint roiLeftOver;
+        uint roiTickets;
         Level1Participants storage playLevel = _level1[levelId];
         // Get the ROI values from here when necessary
         if (generatesROI) {
             roiTickets = (amount * roiPot) / BASE_DISTRIBUTION;
             roiLeftOver = (amount * ticketPrice * roiPot) / BASE_DISTRIBUTION;
             roiLeftOver = roiLeftOver % ticketPrice;
+            console.log(_user, roiTickets);
         }
         nextId = levelId + 1;
         if (!userPlaying.set) {
@@ -544,6 +568,7 @@ contract InfiniteLottery is
             userPlaying.set = true;
             playLevel.users.push(_user);
             playLevel.ticketsPerUser.push(0);
+            playLevel.roiTicketsPerUser.push(0);
             userParticipations[_user].participationsL1.push(levelId);
         }
         // get actual amount of tickets to use this time
@@ -561,6 +586,8 @@ contract InfiniteLottery is
             leftoverTickets = 0;
         }
         playLevel.ticketsPerUser[userPlaying.index] = userPlaying.tickets;
+        if (roiTickets > 0)
+            playLevel.roiTicketsPerUser[userPlaying.index] += roiTickets;
         if (roiLeftOver > 0) playLevel.roiOverflow += roiLeftOver;
         emit TicketsBought(_user, levelId, amount);
     }
@@ -618,7 +645,7 @@ contract InfiniteLottery is
         // DISTRIBUTE WEEKLY POT
         potToDistribute = (pot * weeklyPot) / BASE_DISTRIBUTION;
         cumulativeWeekly += potToDistribute;
-        // weeklyDrawLottery.addToPot(potToDistribute);
+        // weeklyDrawLottery._addToPot(potToDistribute);
         // DISTRIBUTE Roll UP POT
         potToDistribute = (pot * rollupPot) / BASE_DISTRIBUTION;
 
