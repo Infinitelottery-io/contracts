@@ -132,7 +132,7 @@ contract TestLotteryDistribution is Test {
         assertEq(hub.referrals(referral1), 50 ether);
     }
 
-    function test_automatic_distribution_L1() public {
+    function test_automatic_distribution_L1_1() public {
         vm.prank(user1);
         lottery.buyTickets(500, referral1, true);
         // Round is played here
@@ -189,15 +189,15 @@ contract TestLotteryDistribution is Test {
         vm.prank(user2);
         lottery.buyTickets(1500, referral1, true);
 
-        uint[] memory randomNumbers = new uint[](2);
+        uint[] memory randomNumbers = new uint[](1);
         randomNumbers[0] = 100; // This should be 1 ) user1 | 3) user2;
-        randomNumbers[1] = 800; // This should be 2 ) user2 | 4) user3;
         vrf.fulfillRandomWordsWithOverride(1, address(lottery), randomNumbers);
 
         vm.prank(user3);
         lottery.buyTickets(1500, referral1, true);
         // // Play for 1 round
-
+        // randomNumbers = new uint[](1);
+        randomNumbers[0] = 100; // This should be 1 ) user1 | 3) user2;
         vrf.fulfillRandomWordsWithOverride(2, address(lottery), randomNumbers);
         /// fulfill Random number requested
         /// Check winner distribution

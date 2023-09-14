@@ -506,7 +506,6 @@ contract InfiniteLottery is
         (leftovers, level1Played) = _createTickets(
             _ticketAmount,
             level1Played,
-            true,
             _user,
             userPlaying
         );
@@ -517,7 +516,6 @@ contract InfiniteLottery is
                 (leftovers, level1Played) = _createTickets(
                     leftovers,
                     level1Played,
-                    false,
                     _user,
                     userPlaying
                 );
@@ -536,7 +534,6 @@ contract InfiniteLottery is
     /** @notice Creates in a level for the user
      *   @param amount ticket amount to create, can go above max l1 tickets
      *   @param levelId the l1 id where tickets are added
-     *   @param generatesROI this should only be true once on buys, rest of time should be false
      *   @param _user The user that gets the tickets
      *   @param userPlaying STORAGE user Round info
      *   @return leftoverTickets the amount of tickets that overflow current round
@@ -548,20 +545,14 @@ contract InfiniteLottery is
     function _createTickets(
         uint amount,
         uint levelId,
-        bool generatesROI,
         address _user,
         UserRoundInfo storage userPlaying
     ) private returns (uint leftoverTickets, uint nextId) {
         uint roiLeftOver;
         uint roiTickets;
+        uint playingTickets;
         Level1Participants storage playLevel = _level1[levelId];
         // Get the ROI values from here when necessary
-        if (generatesROI) {
-            roiTickets = (amount * roiPot) / BASE_DISTRIBUTION;
-            roiLeftOver = (amount * ticketPrice * roiPot) / BASE_DISTRIBUTION;
-            roiLeftOver = roiLeftOver % ticketPrice;
-            console.log(_user, roiTickets);
-        }
         nextId = levelId + 1;
         if (!userPlaying.set) {
             userPlaying.index = playLevel.users.length;
@@ -585,9 +576,17 @@ contract InfiniteLottery is
             playLevel.totalTickets = leftoverTickets; //overwrite value
             leftoverTickets = 0;
         }
-        playLevel.ticketsPerUser[userPlaying.index] = userPlaying.tickets;
+        playingTickets = userPlaying.tickets;
+        playLevel.ticketsPerUser[userPlaying.index] = playingTickets;
+
+        roiTickets = (playingTickets * roiPot) / BASE_DISTRIBUTION;
+        roiLeftOver =
+            (playingTickets * ticketPrice * roiPot) /
+            BASE_DISTRIBUTION;
+        roiLeftOver = roiLeftOver % ticketPrice;
+
         if (roiTickets > 0)
-            playLevel.roiTicketsPerUser[userPlaying.index] += roiTickets;
+            playLevel.roiTicketsPerUser[userPlaying.index] = roiTickets;
         if (roiLeftOver > 0) playLevel.roiOverflow += roiLeftOver;
         emit TicketsBought(_user, levelId, amount);
     }
