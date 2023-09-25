@@ -15,3 +15,8 @@ remappings= [
   "forge-std/=lib/forge-std/src/",
   "hardhat/=node_modules/hardhat/",
 ]
+
+[rpc_endpoints]
+bsc_testnet = "${TESTNET_RPC_URL}"
+[etherscan]
+bsc_testnet = { key = "${BSCSCAN_API}", url="https://api-testnet.bscscan.com/", chain=97}
