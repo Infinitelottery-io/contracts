@@ -10,7 +10,6 @@ import "./interfaces/ILottery.sol";
 import "./interfaces/IWinnerHub.sol";
 import "./interfaces/IDividendNFT.sol";
 import "./interfaces/IWeeklyLottery.sol";
-import "forge-std/console.sol";
 
 error InfiniteLottery__NoRoundsToPlay();
 error InfiniteLottery__MinimumTicketsNotReached(uint minTickets);
@@ -493,6 +492,7 @@ contract InfiniteLottery is
                 MINIMUM_TICKETS_PER_BUY
             );
         UserParticipations storage userPlays = userParticipations[_user];
+        userPlays.lastParticipation = block.timestamp;
         uint leftovers;
         uint level1Played = maxRoundIdPerLevel[1];
         UserRoundInfo storage userPlaying = userTickets[_user][level1Played];
