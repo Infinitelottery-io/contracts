@@ -21,7 +21,7 @@ contract DiscountBooth is Ownable, ReentrancyGuard {
     uint public totalTicketsBought;
     uint public totalDiscountsGiven;
     uint public discountAmount;
-    uint public constant DISCOUNT_BASE = 10000; // 100.00 Uses 2 decimals just in case;
+    uint public constant DISCOUNT_BASE = 100_00; // 100.00 Uses 2 decimals just in case;
 
     //-------------------------------------------------------------------------
     //    Events
