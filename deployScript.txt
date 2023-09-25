@@ -1,0 +1,1 @@
+forge script script/DeployEco.s.sol:DeployInfiniteEcosystem --broadcast -vv --rpc-url bsc_testnet
