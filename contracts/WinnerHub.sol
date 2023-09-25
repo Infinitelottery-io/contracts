@@ -28,9 +28,11 @@ contract WinnerHub is ReentrancyGuard, Ownable, IWinnerHub {
     mapping(address _referrer => uint _refAmount) public referrals;
 
     IERC20 public USDC;
-    // @audit-issue Check if 1 or multiple contracts will be used
     IERC1155 public ReferralNFT;
     ILottery public Lottery;
+
+    uint public totalRewarded;
+    uint public totalReferrals;
     //-------------------------------------------------------------------------
     //    Events
     //-------------------------------------------------------------------------
@@ -69,7 +71,8 @@ contract WinnerHub is ReentrancyGuard, Ownable, IWinnerHub {
         if (_referral != address(0) && _refAmount > 0) {
             referrals[_referral] += _refAmount;
         }
-
+        totalRewarded += _winAmount;
+        totalReferrals += _refAmount;
         // Since this is ERC20 it'll revert if the sender doesn't have enough balance or allowance
         USDC.transferFrom(msg.sender, address(this), _winAmount + _refAmount);
         emit ReceivedWinnings(_winner, _referral, _winAmount, _refAmount);
