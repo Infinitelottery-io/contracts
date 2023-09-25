@@ -161,16 +161,17 @@ contract TestLotteryDistribution is Test {
         vm.prank(user3);
         lottery.buyTickets(1500, referral1, false);
         // // Play for 1 round
-        assertEq(lottery.totalRoundsToPlay(), 5);
+        // ONLY 4 rounds are played since ROI tickets are only emitted after rounds are played and NOT BEFORE
+        assertEq(lottery.totalRoundsToPlay(), 4);
         // request 5 rounds
         lottery.playRounds();
-
+        // BY PLAYING ROUNDS and adding ROI tickets, the total rounds to play increase to 5.
         /// fulfill Random number requested
-        uint[] memory randomNumbers = new uint[](4);
+        uint[] memory randomNumbers = new uint[](2);
         randomNumbers[0] = 7894384631; // This should be user2 as a winner last 3 digits select a winner for a L1
         randomNumbers[1] = 0; // This should be user2 as a winner last 3 digits select a winner for a L1
-        randomNumbers[2] = 7894384631300; // This should be user2 as a winner last 3 digits select a winner for a L1
-        randomNumbers[3] = 7894384631400; // This should be user2 as a winner last 3 digits select a winner for a L1
+        // randomNumbers[2] = 7894384631300; // This should be user2 as a winner last 3 digits select a winner for a L1
+        // randomNumbers[3] = 7894384631400; // This should be user2 as a winner last 3 digits select a winner for a L1
         vm.expectEmit();
         emit WinnerInfoSet(1, 2, 2, 631, user2);
         vrf.fulfillRandomWordsWithOverride(1, address(lottery), randomNumbers);
