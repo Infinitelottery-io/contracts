@@ -8,7 +8,6 @@ interface IWeeklyLottery {
      */
     function addToPot(uint256 amount) external;
 
-<<<<<<< Updated upstream
     /**
      * Buy Tickets for user
      * @param amount Amount of tickets to buy
@@ -43,7 +42,9 @@ interface IWeeklyLottery {
      */
     function registerNFTHolder(uint[] calldata ids) external;
 
-    function nftsHeld(address user) external view returns (uint);
+    function nftsRegistered(
+        address user
+    ) external view returns (uint totalNFTs, uint[] memory ids);
 
     /**
      * Winner earnings are sent to the WINNER HUB contract for distribution
@@ -54,9 +55,4 @@ interface IWeeklyLottery {
         5% referral system.
         5% for the team.
      */
-=======
-    function checkNFT(uint256 id) external;
-
-    function distributeWin(address id) external;
->>>>>>> Stashed changes
 }
