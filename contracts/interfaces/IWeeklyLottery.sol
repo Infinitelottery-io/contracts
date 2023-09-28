@@ -8,6 +8,7 @@ interface IWeeklyLottery {
      */
     function addToPot(uint256 amount) external;
 
+<<<<<<< Updated upstream
     /**
      * Buy Tickets for user
      * @param amount Amount of tickets to buy
@@ -53,4 +54,9 @@ interface IWeeklyLottery {
         5% referral system.
         5% for the team.
      */
+=======
+    function checkNFT(uint256 id) external;
+
+    function distributeWin(address id) external;
+>>>>>>> Stashed changes
 }
