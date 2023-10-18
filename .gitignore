@@ -12,3 +12,5 @@ artifacts
 # Foundry
 cache_forge
 out
+# Broadcasts
+broadcast/**/97/*
