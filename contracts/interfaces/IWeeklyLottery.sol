@@ -42,7 +42,9 @@ interface IWeeklyLottery {
      */
     function registerNFTHolder(uint[] calldata ids) external;
 
-    function nftsHeld(address user) external view returns (uint);
+    function nftsRegistered(
+        address user
+    ) external view returns (uint totalNFTs, uint[] memory ids);
 
     /**
      * Winner earnings are sent to the WINNER HUB contract for distribution
