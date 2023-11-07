@@ -29,6 +29,7 @@ contract IFL_DividendNFT is ERC721, Ownable, IDividendNFT, ReentrancyGuard {
     string private _uri;
 
     IERC20 public USDC;
+    address public multiSig;
     uint public constant MAX_SUPPLY = 1500;
     uint public totalSupply = 0;
     uint public currentRound;
@@ -42,10 +43,14 @@ contract IFL_DividendNFT is ERC721, Ownable, IDividendNFT, ReentrancyGuard {
     event DividendsDistributed(uint amount);
 
     // Constructor for ERC721 nft with max mint supply of 1500
-    constructor(address _usdc) ERC721("IFL_DividendNFT", "IFL_DividendNFT") {
-        mintRoundInfo[1] = MintRoundInfo(500, 0, 350 ether);
+    constructor(
+        address _usdc,
+        address _receiver
+    ) ERC721("IFL_DividendNFT", "IFL_DividendNFT") {
+        mintRoundInfo[1] = MintRoundInfo(250, 0, 350 ether);
         currentRound = 1;
         USDC = IERC20(_usdc);
+        multiSig = _receiver;
     }
 
     function mint(address forAddress, uint amount) external nonReentrant {
@@ -70,7 +75,7 @@ contract IFL_DividendNFT is ERC721, Ownable, IDividendNFT, ReentrancyGuard {
         if (msg.sender == owner()) return;
 
         uint price = round.price * amount;
-        USDC.transferFrom(msg.sender, address(this), price);
+        USDC.transferFrom(msg.sender, multiSig, price);
     }
 
     function setupRound(
@@ -115,6 +120,7 @@ contract IFL_DividendNFT is ERC721, Ownable, IDividendNFT, ReentrancyGuard {
             }
         }
         totalDividends /= MAGNIFIER;
+        // TODO 10% of dividends go to buy Tickets
         USDC.transfer(msg.sender, totalDividends);
     }
 
@@ -128,6 +134,10 @@ contract IFL_DividendNFT is ERC721, Ownable, IDividendNFT, ReentrancyGuard {
 
     function setURI(string memory uri) external onlyOwner {
         _uri = uri;
+    }
+
+    function setMultiSig(address _multiSig) external onlyOwner {
+        multiSig = _multiSig;
     }
 
     function _baseURI() internal view override returns (string memory) {
