@@ -1146,6 +1146,8 @@ interface IERC20 {
 
 error IFL_ReferralNFT__InvalidAmount();
 error IFL_ReferralNFT__CouldNotTransferUSDC();
+error IFL_ReferralNFT__InvalidAddress();
+error IFL_ReferralNFT__InvalidInput();
 
 /**
  * @title NFT used for Referral
@@ -1170,12 +1172,24 @@ contract IFL_ReferralNFT is ERC1155, Ownable {
 
     function mint(address forAddress, uint amount) external {
         if (amount == 0) revert IFL_ReferralNFT__InvalidAmount();
-        if (!USDC.transferFrom(msg.sender, teamWallet, amount * price))
-            revert IFL_ReferralNFT__CouldNotTransferUSDC();
+        if (msg.sender != owner()) {
+            if (!USDC.transferFrom(msg.sender, teamWallet, amount * price))
+                revert IFL_ReferralNFT__CouldNotTransferUSDC();
+        }
         _mint(forAddress, 1, amount, "");
     }
 
     function setPrice(uint _price) external onlyOwner {
         price = _price;
+    }
+
+    function setURI(string memory _uri) external onlyOwner {
+        if (bytes(_uri).length == 0) revert IFL_ReferralNFT__InvalidInput();
+        _setURI(_uri);
+    }
+
+    function setTeamWallet(address _team) external onlyOwner {
+        if (_team == address(0)) revert IFL_ReferralNFT__InvalidAddress();
+        teamWallet = _team;
     }
 }

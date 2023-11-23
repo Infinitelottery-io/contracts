@@ -9,6 +9,7 @@ import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "./interfaces/ILottery.sol";
 import "./interfaces/IDividendNFT.sol";
 
+error IFL_DividendNFT__InvalidClaim();
 error IFL_DividendNFT__MaxOverflow();
 error IFL_DividendNFT__InvalidRoundToEdit();
 
@@ -29,6 +30,7 @@ contract IFL_DividendNFT is ERC721, Ownable, IDividendNFT, ReentrancyGuard {
     string private _uri;
 
     IERC20 public USDC;
+    ILottery public lottery;
     address public multiSig;
     uint public constant MAX_SUPPLY = 1500;
     uint public totalSupply = 0;
@@ -93,7 +95,7 @@ contract IFL_DividendNFT is ERC721, Ownable, IDividendNFT, ReentrancyGuard {
     }
 
     function setPrice(uint round, uint price) external onlyOwner {
-        if (round <= currentRound) revert IFL_DividendNFT__InvalidRoundToEdit();
+        if (round < currentRound) revert IFL_DividendNFT__InvalidRoundToEdit();
 
         MintRoundInfo storage roundInfo = mintRoundInfo[round];
         roundInfo.price = price;
@@ -119,8 +121,23 @@ contract IFL_DividendNFT is ERC721, Ownable, IDividendNFT, ReentrancyGuard {
                 totalDividends += dividendsToClaim;
             }
         }
+        if (totalDividends == 0) revert IFL_DividendNFT__InvalidClaim();
         totalDividends /= MAGNIFIER;
-        // TODO 10% of dividends go to buy Tickets
+
+        if (address(lottery) != address(0)) {
+            uint lotteryDividends = totalDividends / 10;
+            lotteryDividends = lotteryDividends % 1 ether;
+            if (lotteryDividends > 0) {
+                lottery.buyTicketsForUser(
+                    lotteryDividends,
+                    address(0),
+                    msg.sender,
+                    false
+                );
+                lotteryDividends = lotteryDividends * 1 ether;
+                totalDividends -= lotteryDividends;
+            }
+        }
         USDC.transfer(msg.sender, totalDividends);
     }
 
@@ -138,6 +155,10 @@ contract IFL_DividendNFT is ERC721, Ownable, IDividendNFT, ReentrancyGuard {
 
     function setMultiSig(address _multiSig) external onlyOwner {
         multiSig = _multiSig;
+    }
+
+    function setLottery(address _lottery) external onlyOwner {
+        lottery = ILottery(_lottery);
     }
 
     function _baseURI() internal view override returns (string memory) {
